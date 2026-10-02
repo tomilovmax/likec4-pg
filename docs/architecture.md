@@ -23,6 +23,14 @@
 
 ## Границы REQ-01
 
-REQ-01 создаёт только runnable app shell. `WorkspacePort` скрывает будущий filesystem provider, но пока `EmptyWorkspaceProvider` возвращает безопасные пустые данные. В этот срез не входят configured workspace, файловые операции, Monaco, parsing, diagnostics или diagram renderer.
+REQ-01 создаёт только runnable app shell. `WorkspacePort` скрывает filesystem provider за интерфейсом. В этот срез не входят configured workspace, файловые операции, Monaco, parsing, diagnostics или diagram renderer.
 
 Каждая панель запрашивает собственный HTTP resource и самостоятельно показывает loading, empty, ready или error state. Ошибка панели не должна заменять весь экран.
+
+## Границы REQ-02
+
+REQ-02 делает workspace server-configured. `loadServerConfig` (`apps/server/src/config.ts`) читает `LIKEC4_WORKSPACE` и `PORT` до построения приложения и проверяет каталог: существует, является directory и читаем процессом. При пустом, отсутствующем или недоступном значении startup завершается однострочной понятной ошибкой; сообщения называют только значение оператора, а не resolved-пути хоста. `PORT` по умолчанию — безопасное непривилегированное `3000`.
+
+`LocalWorkspaceProvider` (`apps/server/src/adapters/local-workspace.ts`) — единственная реализация `WorkspacePort`; placeholder REQ-01 `EmptyWorkspaceProvider` и статус `unconfigured` удалены, так как сервер без валидного workspace больше не стартует. `GET /api/workspace` возвращает только `status` и `displayName` (basename нормализованного configured-пути; symlink-цель и абсолютный путь хоста не раскрываются). HTTP API не имеет параметров выбора workspace path.
+
+`listFiles` и `getDiagram` остаются placeholder'ами до REQ-04 и REQ-15. Новые upstream-зависимости не добавлены: используется только `node:fs`.

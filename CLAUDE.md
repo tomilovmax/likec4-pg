@@ -24,4 +24,12 @@ The LikeC4 CLI discovers `.c4` sources, while the graph is stored with the `.lik
 tmpdir=$(mktemp -d) && trap 'rm -rf "$tmpdir"' EXIT && cp requirements.likec4 "$tmpdir/requirements.c4" && npx --yes likec4 validate "$tmpdir"
 ```
 
-No build, lint, unit-test, or single-test command exists until the planned application is added. When implementation introduces tooling, update this section with the exact repository commands and the command for an individual test.
+Application commands (npm workspaces, Node.js >= 22.23.3):
+
+- `npm run dev` — dev mode: web on `http://localhost:3000`, backend on `:3001`; dev workspace defaults to `apps/server/dev-workspace`
+- `npm run build` — production build of contracts, web, and server
+- `npm start` — run the built server; requires an existing readable `LIKEC4_WORKSPACE` directory (`PORT` defaults to `3000`)
+- `npm run typecheck` — TypeScript check in all workspaces
+- `npm run lint` — ESLint over the repository
+- `npm test` — all unit tests (vitest)
+- Single test file: `npx vitest run apps/server/src/config.test.ts`; single scenario: `npx vitest run -t 'rejects a missing directory'`

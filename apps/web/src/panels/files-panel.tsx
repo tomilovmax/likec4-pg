@@ -19,7 +19,7 @@ export function FilesPanel() {
         <div className="resource-state">
           <p>В workspace пока нет файлов.</p>
           <p className="resource-state__detail">
-            Настройка workspace появится в следующем срезе.
+            Дерево файлов workspace появится в следующем срезе.
           </p>
         </div>
       )}

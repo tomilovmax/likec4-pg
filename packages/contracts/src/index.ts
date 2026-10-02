@@ -4,7 +4,6 @@ export const apiErrorCodeSchema = z.enum([
   'INTERNAL_ERROR',
   'NOT_FOUND',
   'VALIDATION_ERROR',
-  'WORKSPACE_NOT_CONFIGURED',
 ])
 
 export const apiErrorSchema = z.object({
@@ -24,7 +23,7 @@ export const healthResponseSchema = z.object({
 export type HealthResponse = z.infer<typeof healthResponseSchema>
 
 export const workspaceResponseSchema = z.object({
-  status: z.enum(['unconfigured', 'ready']),
+  status: z.enum(['ready']),
   displayName: z.string(),
 })
 

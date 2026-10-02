@@ -1,0 +1,21 @@
+// Локальный dev workspace: используется по умолчанию в `npm run dev`
+// (apps/server/package.json), когда оператор не задал LIKEC4_WORKSPACE.
+
+specification {
+  element requirement {
+    shape rectangle
+  }
+}
+
+model {
+  dev = requirement {
+    title 'Dev'
+  }
+}
+
+views {
+  view overview {
+    title 'Overview'
+    include *
+  }
+}
