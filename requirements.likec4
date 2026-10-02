@@ -380,7 +380,7 @@ model {
     '''
   }
 
-  req_language_features = requirement_open {
+  req_language_features = requirement_met {
     title 'REQ-19 · LikeC4 syntax highlighting и diagnostics'
     summary 'Редактор подсвечивает LikeC4 и показывает diagnostics официальной language integration без локальной установки LikeC4 у пользователя.'
     description '''
@@ -389,12 +389,12 @@ model {
       не используется, если официальный интегрируемый вариант существует.
 
       Критерии приёмки:
-      - [ ] .c4/.likec4 имеет syntax highlighting
-      - [ ] invalid DSL показывает diagnostics в editor
-      - [ ] autocomplete работает, если выбранная официальная integration его предоставляет
-      - [ ] browser user не устанавливает локальный LikeC4 CLI или extension
-      - [ ] ошибка одного документа не делает editor неработоспособным
-      - [ ] README/architecture фиксирует выбранный пакет, версию и ограничения integration
+      - [x] .c4/.likec4 имеет syntax highlighting
+      - [x] invalid DSL показывает diagnostics в editor
+      - [x] autocomplete работает, если выбранная официальная integration его предоставляет
+      - [x] browser user не устанавливает локальный LikeC4 CLI или extension
+      - [x] ошибка одного документа не делает editor неработоспособным
+      - [x] README/architecture фиксирует выбранный пакет, версию и ограничения integration
     '''
   }
 

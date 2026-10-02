@@ -4,10 +4,16 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { App } from './app'
-import { readFakeModel, resetForTest } from './editor/monaco-instance.fake'
+import { readFakeModel, resetForTest } from './editor/monaco-editor.fake'
+import {
+  publishDiagnostics,
+  readSyncedSources,
+  resetLanguageRuntimeForTest,
+} from './editor/likec4-language-runtime.fake'
 
-// Monaco не работает в jsdom: подменяется единственная точка работы с ним.
-vi.mock('./editor/monaco-instance', async () => import('./editor/monaco-instance.fake'))
+// Monaco и browser LSP не работают в jsdom: подменяются их единственные границы.
+vi.mock('./editor/monaco-editor', async () => import('./editor/monaco-editor.fake'))
+vi.mock('./editor/likec4-language-runtime', async () => import('./editor/likec4-language-runtime.fake'))
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -20,6 +26,7 @@ afterEach(() => {
   cleanup()
   vi.unstubAllGlobals()
   resetForTest()
+  resetLanguageRuntimeForTest()
 })
 
 describe('REQ-01 desktop shell', () => {
@@ -113,7 +120,11 @@ describe('REQ-01 desktop shell', () => {
 
 /** Редактор открытого файла: fake-Monaco рендерит textarea (REQ-05/06). */
 function editorTextarea(editor: HTMLElement): HTMLTextAreaElement {
-  return within(editor).getByRole('textbox') as HTMLTextAreaElement
+  const textarea = within(editor).getByRole('textbox') as HTMLTextAreaElement
+  if (textarea.value === '') {
+    throw new Error('Monaco model is not attached yet')
+  }
+  return textarea
 }
 
 const nestedFilesResponse = {
@@ -220,9 +231,9 @@ describe('REQ-04 files panel', () => {
     })
     expect(specification.getAttribute('aria-current')).toBe('true')
 
-    // Открытие идёт по относительному пути: единственный новый запрос —
-    // чтение файла, абсолютный путь хоста браузеру недоступен.
-    expect(fetchCalls.mock.calls).toHaveLength(4)
+    // Открытие и фоновая загрузка полного DSL-набора идут только по
+    // относительным API-путям; абсолютный путь хоста браузеру недоступен.
+    expect(fetchCalls.mock.calls).toHaveLength(6)
     expect(fetchCalls.mock.calls.every(([path]) => String(path).startsWith('/api/'))).toBe(true)
   })
 })
@@ -476,6 +487,68 @@ describe('REQ-06 editor buffer', () => {
     fireEvent.change(textarea, { target: { value: editedSpecification } })
     await waitFor(() => {
       expect(within(editor).getByText(/не сохранён/)).toBeTruthy()
+    })
+  })
+
+  it('keeps the active editor available when another LikeC4 document has diagnostics', async () => {
+    stubApiWithSources()
+
+    render(<App />)
+
+    const files = screen.getByRole('region', { name: 'Files' })
+    const editor = screen.getByRole('region', { name: 'Code Editor' })
+    await openFile(files, /specification\.c4/)
+
+    await waitFor(() => {
+      expect(readSyncedSources().map((source) => source.path).sort()).toEqual([
+        'model/specification.c4',
+        'views/overview.likec4',
+      ])
+    })
+    expect(editorTextarea(editor).value).toBe(savedSpecification)
+
+    publishDiagnostics({
+      'views/overview.likec4': [
+        {
+          message: 'Unexpected token',
+          range: { startLineNumber: 2, startColumn: 3, endLineNumber: 2, endColumn: 11 },
+          severity: 8,
+        },
+      ],
+    })
+
+    // Ошибка другого документа не заменяет и не блокирует текущий editor.
+    fireEvent.change(editorTextarea(editor), { target: { value: editedSpecification } })
+    await waitFor(() => {
+      expect(within(editor).getByText(/не сохранён/)).toBeTruthy()
+    })
+
+    await openFile(files, /overview\.likec4/)
+    await waitFor(() => {
+      expect(within(editor).getByLabelText('Диагностика LikeC4').textContent).toContain('Unexpected token')
+      expect(within(editor).getByText(/строка 2, столбец 3/)).toBeTruthy()
+    })
+  })
+
+  it('synchronizes an unsaved active LikeC4 buffer into the language workspace', async () => {
+    stubApiWithSources()
+
+    render(<App />)
+
+    const files = screen.getByRole('region', { name: 'Files' })
+    const editor = screen.getByRole('region', { name: 'Code Editor' })
+    await openFile(files, /specification\.c4/)
+    await waitFor(() => {
+      expect(readSyncedSources()).toHaveLength(2)
+    })
+
+    fireEvent.change(editorTextarea(editor), { target: { value: editedSpecification } })
+
+    await waitFor(() => {
+      expect(readSyncedSources()).toContainEqual({
+        path: 'model/specification.c4',
+        content: editedSpecification,
+      })
     })
   })
 })

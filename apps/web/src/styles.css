@@ -192,6 +192,48 @@ button:hover {
   color: #6f7d95;
 }
 
+.language-runtime-status,
+.language-runtime-error {
+  margin: 0 0 0.65rem;
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
+
+.language-runtime-status {
+  color: #9fb0cd;
+}
+
+.language-runtime-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  border: 1px solid #7e4547;
+  border-radius: 0.35rem;
+  background: #3d272c;
+  padding: 0.45rem 0.55rem;
+  color: #ffbab5;
+}
+
+.language-runtime-error button {
+  flex: none;
+  padding: 0.25rem 0.45rem;
+  font-size: 0.75rem;
+}
+
+.editor-diagnostics {
+  display: grid;
+  gap: 0.25rem;
+  margin: -0.1rem 0 0;
+  padding: 0.5rem 0.65rem 0.5rem 1.7rem;
+  border-left: 3px solid #d96c72;
+  border-radius: 0.2rem;
+  background: #30242a;
+  color: #ffc8c4;
+  font-size: 0.78rem;
+  line-height: 1.4;
+}
+
 .opened-file__dirty {
   border-radius: 0.25rem;
   background: #3a301d;
