@@ -2,12 +2,14 @@ import path from 'node:path'
 
 import type {
   DiagramResponse,
+  FileContentResponse,
   FilesResponse,
   WorkspaceResponse,
 } from '@likec4-web-ide/contracts'
 
 import type { WorkspacePort } from '../domain/workspace-port.js'
 import { WorkspacePathResolver } from '../workspace-paths.js'
+import { readWorkspaceFile } from '../workspace-file.js'
 import { listWorkspaceFiles } from '../workspace-tree.js'
 
 export class LocalWorkspaceProvider implements WorkspacePort {
@@ -30,6 +32,11 @@ export class LocalWorkspaceProvider implements WorkspacePort {
   // resolver’а, клиентский путь не участвует.
   async listFiles(): Promise<FilesResponse> {
     return { items: await listWorkspaceFiles(this.paths) }
+  }
+
+  // REQ-05: буквальный UTF-8 текст разрешённого файла и version token.
+  async readFile(userPath: string): Promise<FileContentResponse> {
+    return readWorkspaceFile(this.paths, userPath)
   }
 
   // Placeholder до REQ-15: diagram preview ещё не подключён.
