@@ -18,11 +18,9 @@ export function CodeEditorPanel() {
       {state.status === 'ready' && (
         <div className="resource-state">
           <p>Выберите файл в панели Files, чтобы открыть его.</p>
-          {state.data.status === 'unconfigured' && (
-            <p className="resource-state__detail">
-              Workspace ещё не настроен на сервере.
-            </p>
-          )}
+          <p className="resource-state__detail">
+            Workspace «{state.data.displayName}» готов к работе.
+          </p>
         </div>
       )}
     </Panel>

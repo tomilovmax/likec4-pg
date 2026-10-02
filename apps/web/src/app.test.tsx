@@ -24,7 +24,7 @@ describe('REQ-01 desktop shell', () => {
       vi.fn((path: string) => {
         if (path === '/api/workspace') {
           return Promise.resolve(
-            jsonResponse({ status: 'unconfigured', displayName: 'Workspace' }),
+            jsonResponse({ status: 'ready', displayName: 'architecture' }),
           )
         }
         if (path === '/api/files') {
@@ -46,6 +46,9 @@ describe('REQ-01 desktop shell', () => {
       expect(within(files).getByText('В workspace пока нет файлов.')).toBeTruthy()
       expect(
         within(editor).getByText('Выберите файл в панели Files, чтобы открыть его.'),
+      ).toBeTruthy()
+      expect(
+        within(editor).getByText(/Workspace «architecture» готов к работе\./),
       ).toBeTruthy()
       expect(
         within(diagram).getByText('Нет доступной LikeC4 view для отображения.'),
@@ -70,7 +73,7 @@ describe('REQ-01 desktop shell', () => {
       }
       if (path === '/api/workspace') {
         return Promise.resolve(
-          jsonResponse({ status: 'unconfigured', displayName: 'Workspace' }),
+          jsonResponse({ status: 'ready', displayName: 'architecture' }),
         )
       }
       return Promise.resolve(

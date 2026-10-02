@@ -1,20 +1,19 @@
 import fastifyStatic from '@fastify/static'
 import Fastify, { type FastifyInstance } from 'fastify'
 
-import { EmptyWorkspaceProvider } from './adapters/empty-workspace.js'
-import { ApiError } from './http/api-error.js'
 import type { WorkspacePort } from './domain/workspace-port.js'
+import { ApiError } from './http/api-error.js'
 
 export interface BuildAppOptions {
   staticRoot?: string
-  workspace?: WorkspacePort
+  workspace: WorkspacePort
 }
 
 export async function buildApp(
-  options: BuildAppOptions = {},
+  options: BuildAppOptions,
 ): Promise<FastifyInstance> {
   const app = Fastify({ logger: false })
-  const workspace = options.workspace ?? new EmptyWorkspaceProvider()
+  const workspace = options.workspace
 
   app.setErrorHandler((error, _request, reply) => {
     if (error instanceof ApiError) {
