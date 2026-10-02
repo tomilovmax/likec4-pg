@@ -1,0 +1,468 @@
+// Граф реализуемых требований к self-hosted LikeC4 Web IDE.
+//
+// Каждый узел — законченный функциональный результат, который можно передать
+// одному агенту как отдельную задачу и принять отдельным MR. Узел не описывает
+// исследование, намерение или технологическое предпочтение: он фиксирует
+// наблюдаемое поведение и сценарий его проверки.
+//
+// Направление стрелки: от prerequisite к требованию, которое он разблокирует.
+// Исходные .c4/.likec4 остаются source of truth: приложение никогда не
+// сериализует распарсенную модель обратно в DSL.
+//
+// Общие границы MVP (не отдельные требования): приложение self-hosted, работает
+// с одним примонтированным workspace и не включает Git, аутентификацию, БД,
+// роли, collaboration, history, AI, Kubernetes или CI/CD deployment. Browser
+// взаимодействует с файловой системой только через backend API.
+
+specification {
+  element requirement_met {
+    title 'Требование (выполнено)'
+    style {
+      shape rectangle
+      color green
+    }
+  }
+
+  element requirement_partial {
+    title 'Требование (частично)'
+    style {
+      shape rectangle
+      color amber
+    }
+  }
+
+  element requirement_open {
+    title 'Требование (открыто)'
+    style {
+      shape rectangle
+      color slate
+    }
+  }
+}
+
+model {
+  req_app_shell = requirement_open {
+    title 'REQ-01 · Открываемая трёхпанельная Web IDE'
+    summary 'Пользователь открывает один URL и получает Files, Code Editor и Diagram без доступа браузера к файловой системе.'
+    description '''
+      Результат: runnable frontend и backend отдают одну browser application.
+      При открытии корневого URL пользователь видит панели Files, Code Editor и
+      Diagram, а также независимые loading, empty и error states.
+
+      Критерии приёмки:
+      - [ ] GET / возвращает Web IDE, пригодную для desktop browser
+      - [ ] в UI одновременно существуют области Files, Code Editor и Diagram
+      - [ ] UI получает данные только по backend HTTP API
+      - [ ] ошибка одного API-запроса не заменяет весь экран необработанной ошибкой
+      - [ ] README содержит одну команду локального запуска для проверки этого среза
+    '''
+    -> req_workspace_config 'Приложению нужен настроенный workspace'
+    -> req_file_tree 'Панель Files получает данные'
+    -> req_editor_buffer 'Редактор получает открытый текст'
+    -> req_diagram_preview 'Панель Diagram получает preview'
+  }
+
+  req_workspace_config = requirement_open {
+    title 'REQ-02 · Настроенный и проверенный workspace'
+    summary 'Backend стартует только с существующим каталогом из LIKEC4_WORKSPACE и не принимает путь от browser.'
+    description '''
+      Результат: оператор задаёт LIKEC4_WORKSPACE и PORT в server-side
+      configuration; backend использует этот каталог как единственный filesystem
+      root на всём времени работы.
+
+      Критерии приёмки:
+      - [ ] при существующем читаемом каталоге приложение успешно стартует
+      - [ ] при пустом, отсутствующем или недоступном каталоге startup завершается
+            с понятной ошибкой без раскрытия лишних путей хоста
+      - [ ] PORT имеет документированное безопасное значение по умолчанию
+      - [ ] HTTP API не имеет параметра, позволяющего выбрать иной workspace path
+      - [ ] GET /api/workspace возвращает только безопасные UI-сведения: display name
+            и статус, но не абсолютный путь хоста
+    '''
+    -> req_path_confinement 'Даёт доверенный корень resolver’у'
+    -> req_container_deployment 'Контейнер передаёт конфигурацию'
+  }
+
+  req_path_confinement = requirement_open {
+    title 'REQ-03 · Изолированные файловые пути workspace'
+    summary 'Все файловые действия принимают только относительный path и физически не выходят за LIKEC4_WORKSPACE.'
+    description '''
+      Результат: общий server-side resolver используется каждым файловым endpoint’ом.
+      Он проверяет путь после URL-decoding и нормализации, учитывает realpath и
+      symlink существующей цели, а для создаваемой цели проверяет realpath parent.
+
+      Критерии приёмки:
+      - [ ] ../, абсолютный путь, URL-encoded traversal и symlink за пределы root
+            получают 4xx error
+      - [ ] list, read, write, create, mkdir, rename и delete используют один guard
+      - [ ] запрещённый путь не раскрывает содержимое или абсолютный путь внешнего файла
+      - [ ] автоматические tests проверяют минимум ../../etc/passwd и symlink наружу
+      - [ ] endpoint не выполняет shell-команду с пользовательским DSL или path
+    '''
+    -> req_file_tree 'Защищает построение дерева'
+    -> req_open_file 'Защищает чтение'
+    -> req_save_file 'Защищает запись'
+    -> req_create_file 'Защищает создание файла'
+    -> req_create_directory 'Защищает создание каталога'
+    -> req_rename_entry 'Защищает переименование'
+    -> req_delete_entry 'Защищает удаление'
+  }
+
+  req_file_tree = requirement_open {
+    title 'REQ-04 · Навигация по разрешённым файлам workspace'
+    summary 'Files panel показывает вложенное дерево LikeC4-проекта и позволяет выбрать файл для открытия.'
+    description '''
+      Результат: GET /api/files возвращает вложенные каталоги и разрешённые
+      текстовые файлы, а Files panel отображает их и запускает открытие по клику.
+      Поддерживаются .c4, .likec4 и конфигурационные файлы LikeC4; бинарные и
+      нерелевантные файлы не предлагаются как редактируемый DSL.
+
+      Критерии приёмки:
+      - [ ] в UI видны вложенные каталоги и разрешённые файлы из workspace
+      - [ ] .c4, .likec4 и LikeC4 config визуально различимы
+      - [ ] выбор файла вызывает его открытие, а не передаёт браузеру абсолютный path
+      - [ ] правила фильтрации одинаковы для списка и чтения файла
+      - [ ] пустой workspace и ошибка GET /api/files имеют понятные состояния
+      - [ ] дерево не содержит entry за границами workspace
+    '''
+    -> req_open_file 'Выбранный файл запрашивается у API'
+    -> req_file_operations 'Дерево является точкой файловых действий'
+  }
+
+  req_open_file = requirement_open {
+    title 'REQ-05 · Открытие исходного текста файла'
+    summary 'Пользователь выбирает разрешённый файл и получает его неизменённый UTF-8 текст вместе с версией.'
+    description '''
+      Результат: endpoint чтения по относительному пути возвращает текст файла и
+      version token (ETag либо эквивалент) для последующего optimistic save.
+      Frontend передаёт текст в редактор без format-on-load и без DSL round-trip.
+
+      Критерии приёмки:
+      - [ ] существующий разрешённый .c4/.likec4 открывается с буквальным UTF-8 содержимым
+      - [ ] ответ содержит стабильный version token текущего содержимого
+      - [ ] отсутствующий файл даёт 404, а недоступный — корректный JSON error
+      - [ ] binary и запрещённый тип не выдаются как редактируемый текст
+      - [ ] комментарии, форматирование и переводы строк не меняются при открытии
+    '''
+    -> req_editor_buffer 'Исходный текст появляется в редакторе'
+  }
+
+  req_editor_buffer = requirement_open {
+    title 'REQ-06 · Редактирование и изолированный buffer'
+    summary 'Пользователь изменяет открытый LikeC4 текст, а UI отличает несохранённый buffer от сохранённого файла.'
+    description '''
+      Результат: editor, совместимый с выбранной интеграцией LikeC4 (Monaco или
+      официальный компонент Playground), хранит исходный text buffer отдельно от
+      распарсенной модели и показывает его dirty state.
+
+      Критерии приёмки:
+      - [ ] открытый .c4/.likec4 отображается без автоматического форматирования
+      - [ ] пользователь может менять текст buffer
+      - [ ] у изменённого файла есть заметный unsaved indicator
+      - [ ] открытие или закрытие другого файла не теряет изменённый текст без выбора пользователя
+      - [ ] редактор продолжает работать, когда preview или parsing завершились ошибкой
+    '''
+    -> req_save_file 'Buffer передаётся сохранению'
+    -> req_unsaved_changes 'Dirty state используется защитой от потери'
+    -> req_language_features 'Редактор получает language integration'
+  }
+
+  req_save_file = requirement_open {
+    title 'REQ-07 · Атомарное сохранение с защитой от конфликта'
+    summary 'Пользователь сохраняет literal text buffer в исходный файл и не перезаписывает чужую новую версию молча.'
+    description '''
+      Результат: PUT endpoint принимает UTF-8 text и version token, выполняет
+      atomic replace в рамках поддерживаемой файловой системы и возвращает новую
+      версию. Запись никогда не строится через сериализацию LikeC4 model.
+
+      Критерии приёмки:
+      - [ ] пользовательский Ctrl+S сохраняет buffer активного файла
+      - [ ] форматирование и комментарии записываются буквально
+      - [ ] при ошибке записи старое содержимое файла остаётся целым
+      - [ ] устаревший version token даёт явно обрабатываемый conflict, не last-write-wins
+      - [ ] успешный save обновляет version token и снимает dirty state
+      - [ ] tests подтверждают atomic failure и conflict сценарии
+    '''
+    -> req_unsaved_changes 'Save UX показывает результат'
+    -> req_refresh_project 'Успешное сохранение обновляет модель'
+  }
+
+  req_create_file = requirement_open {
+    title 'REQ-08 · Создание и открытие нового .c4 файла'
+    summary 'Пользователь создаёт новый LikeC4 файл в выбранном каталоге и сразу редактирует его.'
+    description '''
+      Результат: файловый API и Files panel создают неперезаписывающий новый .c4
+      файл в существующем выбранном parent directory.
+
+      Критерии приёмки:
+      - [ ] UI принимает имя и выбранный parent directory, backend создаёт только .c4
+      - [ ] несуществующий parent, traversal и недопустимое расширение отклоняются
+      - [ ] существующий файл не перезаписывается; UI показывает conflict
+      - [ ] после успеха дерево обновляется, а файл сразу открывается в editor
+      - [ ] ошибка API остаётся видимой и не создаёт ложный entry в UI
+    '''
+    -> req_file_operations 'Создание доступно из дерева'
+    -> req_refresh_project 'Новый файл включается в модель после сохранения'
+  }
+
+  req_create_directory = requirement_open {
+    title 'REQ-09 · Создание каталога workspace'
+    summary 'Пользователь создаёт один новый каталог внутри выбранного существующего parent directory.'
+    description '''
+      Результат: файловый API и Files panel создают каталог без рекурсивного
+      создания произвольного пути и обновляют дерево только после подтверждённого успеха.
+
+      Критерии приёмки:
+      - [ ] новый каталог создаётся внутри выбранного разрешённого parent directory
+      - [ ] traversal, имя с конфликтом и отсутствующий parent корректно отклоняются
+      - [ ] endpoint не создаёт каталог за workspace, в том числе через symlink
+      - [ ] после успеха новый каталог появляется в дереве
+      - [ ] HTTP error виден пользователю и не оставляет ложное успешное состояние
+    '''
+    -> req_file_operations 'Создание каталога доступно из дерева'
+  }
+
+  req_rename_entry = requirement_open {
+    title 'REQ-10 · Переименование файла или каталога'
+    summary 'Пользователь переименовывает workspace entry без выхода за root и без неявного overwrite.'
+    description '''
+      Результат: файловый API принимает безопасные source и destination paths;
+      UI переименовывает выбранный файл либо каталог и синхронизирует tree и tabs.
+
+      Критерии приёмки:
+      - [ ] source и destination проходят общий path resolver
+      - [ ] существующий destination отклоняется, если нет отдельного явного overwrite action
+      - [ ] переименование каталога переносит вложенное содержимое как filesystem rename
+      - [ ] tree и путь открытой вкладки обновляются после успеха
+      - [ ] filesystem error не приводит к partial overwrite или ложному UI success
+    '''
+    -> req_file_operations 'Переименование доступно из дерева'
+    -> req_refresh_project 'Изменённый путь учитывается при пересборке модели'
+  }
+
+  req_delete_entry = requirement_open {
+    title 'REQ-11 · Подтверждённое удаление файла или каталога'
+    summary 'Пользователь удаляет ровно выбранный workspace entry после явного предупреждения о последствиях.'
+    description '''
+      Результат: delete flow показывает confirmation с именем и типом entry;
+      backend удаляет только разрешённую цель. Политика непустого каталога задана
+      явно: MVP отклоняет его с conflict и не выполняет recursive delete.
+
+      Критерии приёмки:
+      - [ ] dialog показывает имя и тип цели до HTTP request
+      - [ ] Cancel не вызывает API request
+      - [ ] empty directory и file удаляются; non-empty directory возвращает conflict
+      - [ ] 404, conflict и path error отображаются без ложного UI success
+      - [ ] после успеха закрываются/помечаются затронутые tabs и обновляется tree
+    '''
+    -> req_file_operations 'Удаление доступно из дерева'
+    -> req_refresh_project 'Удаление учитывается при пересборке модели'
+  }
+
+  req_unsaved_changes = requirement_open {
+    title 'REQ-12 · Защита несохранённых изменений'
+    summary 'UI предлагает Save, Discard или Cancel перед действием, которое может потерять dirty buffer.'
+    description '''
+      Результат: смена файла, закрытие вкладки и browser navigation обрабатывают
+      dirty state. Save использует REQ-07, а error сохранения сохраняет buffer.
+
+      Критерии приёмки:
+      - [ ] Ctrl+S предотвращает browser default и сохраняет активный файл
+      - [ ] при смене/закрытии dirty файла доступны Save, Discard и Cancel
+      - [ ] при неудачном Save buffer и dirty state не сбрасываются
+      - [ ] Cancel сохраняет текущий экран без нового API request
+      - [ ] success, conflict и error notifications доступны и понятны
+    '''
+  }
+
+  req_file_operations = requirement_open {
+    title 'REQ-13 · Целостный UX файловых операций'
+    summary 'Files panel предоставляет create file, create directory, rename и delete с единым отображением HTTP-ошибок.'
+    description '''
+      Результат: пользователь запускает все разрешённые файловые действия из tree,
+      а UI не расходится с серверным состоянием после success, error или conflict.
+
+      Критерии приёмки:
+      - [ ] действия create .c4, create directory, rename и delete доступны в Files panel
+      - [ ] каждая форма валидирует обязательные значения до request
+      - [ ] все 4xx/5xx ошибки отображаются рядом с действием либо как notification
+      - [ ] после успешного действия tree обновляется из server state
+      - [ ] active file, открытые tabs и preview не ссылаются на удалённый или переименованный path
+    '''
+  }
+
+  req_workspace_loader = requirement_open {
+    title 'REQ-14 · Загрузка полного multi-file LikeC4 проекта'
+    summary 'Backend или frontend загружает все относящиеся файлы workspace как одну LikeC4 model, а не как одиночный открытый файл.'
+    description '''
+      Результат: используется зафиксированная версия официального LikeC4 API
+      (например, LikeC4.fromWorkspace() при его доступности) для discovery config,
+      specification, model и views. Интеграция не зависит от Git repository.
+
+      Критерии приёмки:
+      - [ ] проект с likec4.config.json, specification.c4, model.c4 и views.c4 загружается как единая model
+      - [ ] вложенные model/ и views/ directories участвуют по правилам выбранной версии LikeC4
+      - [ ] открытие одного file не исключает другие files из parsing context
+      - [ ] версия пакетов и вызванный официальный API зафиксированы в docs/architecture.md
+      - [ ] integration test использует fixture с cross-file references и как минимум двумя views
+    '''
+    -> req_diagram_preview 'Полная модель нужна renderer’у'
+    -> req_view_selector 'Полная модель содержит views'
+    -> req_refresh_project 'Определяет scope reparse'
+    -> req_language_features 'Даёт parser и diagnostics context'
+  }
+
+  req_diagram_preview = requirement_open {
+    title 'REQ-15 · Интерактивный preview существующей LikeC4 view'
+    summary 'Diagram panel отображает реальную интерактивную диаграмму из полной LikeC4 model.'
+    description '''
+      Результат: preview использует packages/diagram, packages/likec4-spa или иной
+      задокументированный официальный integration path; самостоятельно написанный
+      renderer не допускается.
+
+      Критерии приёмки:
+      - [ ] существующая валидная view отображается интерактивной LikeC4 diagram
+      - [ ] diagram строится из multi-file model, а не только из editor buffer
+      - [ ] при отсутствии view и при renderer error показано отдельное понятное состояние
+      - [ ] preview error не ломает файловое дерево и редактор
+      - [ ] docs/architecture.md фиксирует package, версию и upstream provenance адаптированного кода
+    '''
+    -> req_invalid_dsl 'Preview сообщает о повреждённой модели'
+  }
+
+  req_view_selector = requirement_open {
+    title 'REQ-16 · Выбор диаграммы из списка views'
+    summary 'Пользователь выбирает любую доступную LikeC4 view, а preview показывает именно её.'
+    description '''
+      Результат: UI получает список views из загруженной model, отображает понятные
+      названия и синхронизирует выбранную view с Diagram panel.
+
+      Критерии приёмки:
+      - [ ] UI показывает все views, найденные в model, без захардкоженного имени файла
+      - [ ] выбор другой view обновляет diagram preview
+      - [ ] после refresh сохраняется selection существующей view
+      - [ ] при исчезновении выбранной view применяется понятный безопасный fallback
+      - [ ] integration test переключает минимум две view
+    '''
+  }
+
+  req_refresh_project = requirement_open {
+    title 'REQ-17 · Reparse и обновление preview после сохранения'
+    summary 'После успешного сохранения система пересобирает весь проект и обновляет diagnostics, views и diagram.'
+    description '''
+      Результат: flow edit → save → reparse workspace → preview не использует
+      parser result для записи DSL и допускает позднее добавление debounce live preview.
+
+      Критерии приёмки:
+      - [ ] valid change в model или views отражается в diagram после Ctrl+S
+      - [ ] reparse охватывает multi-file workspace, включая зависимый файл, не открытый в editor
+      - [ ] список views и выбранная view синхронизируются с новой model
+      - [ ] parser error после успешной записи не отменяет сохранённый текст
+      - [ ] API/UI boundary не требует перепроектирования для будущего debounce текущего buffer
+    '''
+    -> req_invalid_dsl 'Ошибки reparse обрабатываются UI'
+  }
+
+  req_invalid_dsl = requirement_open {
+    title 'REQ-18 · Редактирование повреждённого LikeC4 DSL'
+    summary 'Syntax или model error видим пользователю, но не блокирует файлы, редактор и повторное сохранение.'
+    description '''
+      Результат: parsing и rendering failures изолированы от базового file-editing
+      flow. Preview никогда не выдаёт прежнюю diagram за актуальную после
+      неудачного reparse.
+
+      Критерии приёмки:
+      - [ ] syntax/model error отображается рядом с editor и/или Diagram panel
+      - [ ] статус preview явно говорит, что актуальная diagram недоступна
+      - [ ] пользователь может исправить текст и сохранить его повторно
+      - [ ] Files panel, открытие и save доступны при ошибке
+      - [ ] integration test намеренно сохраняет invalid .c4 и затем восстанавливает valid model
+    '''
+  }
+
+  req_language_features = requirement_open {
+    title 'REQ-19 · LikeC4 syntax highlighting и diagnostics'
+    summary 'Редактор подсвечивает LikeC4 и показывает diagnostics официальной language integration без локальной установки LikeC4 у пользователя.'
+    description '''
+      Результат: подключены опубликованные language services, language server или
+      Playground integration выбранной upstream версии. Самодельная grammar/parser
+      не используется, если официальный интегрируемый вариант существует.
+
+      Критерии приёмки:
+      - [ ] .c4/.likec4 имеет syntax highlighting
+      - [ ] invalid DSL показывает diagnostics в editor
+      - [ ] autocomplete работает, если выбранная официальная integration его предоставляет
+      - [ ] browser user не устанавливает локальный LikeC4 CLI или extension
+      - [ ] ошибка одного документа не делает editor неработоспособным
+      - [ ] README/architecture фиксирует выбранный пакет, версию и ограничения integration
+    '''
+  }
+
+  req_container_deployment = requirement_open {
+    title 'REQ-20 · Запуск Web IDE в контейнере с внешним workspace volume'
+    summary 'Оператор запускает production Web IDE через Docker Compose; изменения всегда остаются в примонтированном host-каталоге.'
+    description '''
+      Результат: Dockerfile собирает frontend и backend без workspace content в image,
+      а docker-compose.yml монтирует внешний каталог в /workspace, передаёт
+      LIKEC4_WORKSPACE=/workspace и публикует PORT без host network.
+
+      Критерии приёмки:
+      - [ ] docker compose up -d --build запускает UI на настроенном PORT, например 8080
+      - [ ] .env.example содержит LIKEC4_WORKSPACE=/workspace и PORT=8080
+      - [ ] documented example /opt/architecture:/workspace доступен приложению
+      - [ ] restart и rebuild контейнера не удаляют изменения в host workspace
+      - [ ] runtime process работает non-root, когда права volume это допускают
+      - [ ] image не содержит workspace files, secrets и не требующиеся dev tools
+    '''
+    -> req_operator_docs 'Появляется проверяемый способ развёртывания'
+    -> req_e2e_validation 'Создаёт production-подобную среду проверки'
+  }
+
+  req_operator_docs = requirement_open {
+    title 'REQ-21 · Инструкция оператора для безопасного self-hosting'
+    summary 'README позволяет развернуть, обновить и ограничить доступ к Web IDE без Git в workspace.'
+    description '''
+      Результат: русский README содержит проверенный Quick Start, схему external
+      workspace volume, обновление образа без потери DSL и заметное ограничение
+      сетевой безопасности MVP.
+
+      Критерии приёмки:
+      - [ ] «Что это» описывает self-hosted browser IDE для LikeC4
+      - [ ] Quick Start включает clone, cp .env.example .env, настройку env и docker compose up -d --build
+      - [ ] показано сопоставление /opt/architecture → /workspace
+      - [ ] описано обновление Web IDE без потери .c4/.likec4
+      - [ ] явно указано, что MVP нельзя публиковать напрямую в Интернет без reverse proxy и authentication
+      - [ ] docs/architecture.md содержит зафиксированную upstream version, reused packages и provenance адаптированного кода
+    '''
+  }
+
+  req_e2e_validation = requirement_open {
+    title 'REQ-22 · Воспроизводимая сквозная приёмка MVP'
+    summary 'Автоматизированная проверка доказывает browser, filesystem и container flow на реальном multi-file workspace.'
+    description '''
+      Результат: test fixture вне production workspace и команда проверки создают
+      external mounted LikeC4 project с cross-file references, двумя views и
+      намеренно invalid вариантом. Отчёт тестов фиксирует фактический результат.
+
+      Критерии приёмки:
+      - [ ] fixture содержит likec4.config.json, specification.c4, model.c4, views.c4 и cross-file references
+      - [ ] browser test открывает дерево и файл, проверяет highlighting, view selector и diagram
+      - [ ] browser test меняет DSL, нажимает Ctrl+S и проверяет изменение исходного host-файла и preview
+      - [ ] test перезапускает контейнер и подтверждает сохранность изменений в mounted workspace
+      - [ ] invalid .c4 показывает diagnostics и не ломает file-editing flow
+      - [ ] security test подтверждает, что ../../etc/passwd нельзя read, write, rename или delete
+      - [ ] команда, результаты тестов и известные ограничения доступны в репозитории
+    '''
+  }
+}
+
+views {
+  view delivery_path {
+    title 'Функциональный backlog LikeC4 Web IDE'
+    description 'Единственный порядок реализации: каждый узел — принимаемый функциональный срез для отдельного MR; стрелка идёт от prerequisite к разблокируемому срезу.'
+
+    include *
+
+    autoLayout TopBottom
+  }
+}
