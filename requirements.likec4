@@ -41,7 +41,7 @@ specification {
 }
 
 model {
-  req_app_shell = requirement_open {
+  req_app_shell = requirement_met {
     title 'REQ-01 · Открываемая трёхпанельная Web IDE'
     summary 'Пользователь открывает один URL и получает Files, Code Editor и Diagram без доступа браузера к файловой системе.'
     description '''
@@ -50,11 +50,11 @@ model {
       Diagram, а также независимые loading, empty и error states.
 
       Критерии приёмки:
-      - [ ] GET / возвращает Web IDE, пригодную для desktop browser
-      - [ ] в UI одновременно существуют области Files, Code Editor и Diagram
-      - [ ] UI получает данные только по backend HTTP API
-      - [ ] ошибка одного API-запроса не заменяет весь экран необработанной ошибкой
-      - [ ] README содержит одну команду локального запуска для проверки этого среза
+      - [x] GET / возвращает Web IDE, пригодную для desktop browser
+      - [x] в UI одновременно существуют области Files, Code Editor и Diagram
+      - [x] UI получает данные только по backend HTTP API
+      - [x] ошибка одного API-запроса не заменяет весь экран необработанной ошибкой
+      - [x] README содержит одну команду локального запуска для проверки этого среза
     '''
     -> req_workspace_config 'Приложению нужен настроенный workspace'
     -> req_file_tree 'Панель Files получает данные'

@@ -1,0 +1,20 @@
+{
+  "name": "@likec4-web-ide/server",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "PORT=3001 tsx watch src/server.ts",
+    "build": "rm -rf dist && tsc -p tsconfig.json",
+    "start": "node dist/server.js",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@fastify/static": "10.1.5",
+    "@likec4-web-ide/contracts": "file:../../packages/contracts",
+    "fastify": "5.12.5"
+  },
+  "devDependencies": {
+    "tsx": "4.20.6"
+  }
+}
