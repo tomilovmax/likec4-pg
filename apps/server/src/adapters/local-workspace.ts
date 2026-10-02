@@ -7,9 +7,16 @@ import type {
 } from '@likec4-web-ide/contracts'
 
 import type { WorkspacePort } from '../domain/workspace-port.js'
+import { WorkspacePathResolver } from '../workspace-paths.js'
 
 export class LocalWorkspaceProvider implements WorkspacePort {
-  constructor(private readonly workspaceRoot: string) {}
+  // Единственный path guard (REQ-03): файловые операции REQ-04+ принимают от
+  // клиента только относительный путь и резолвят его исключительно через него.
+  private readonly paths: WorkspacePathResolver
+
+  constructor(private readonly workspaceRoot: string) {
+    this.paths = new WorkspacePathResolver(workspaceRoot)
+  }
 
   async getWorkspace(): Promise<WorkspaceResponse> {
     return {
