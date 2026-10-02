@@ -1,9 +1,11 @@
 import {
   apiErrorSchema,
   diagramResponseSchema,
+  fileContentResponseSchema,
   filesResponseSchema,
   type ApiError,
   type DiagramResponse,
+  type FileContentResponse,
   type FilesResponse,
   type WorkspaceResponse,
   workspaceResponseSchema,
@@ -39,10 +41,17 @@ async function request<T>(path: string, schema: ZodType<T>): Promise<T> {
   return schema.parse(payload)
 }
 
+/** Относительный путь файла кодируется по сегментам: `/` остаются разделителями. */
+function fileUrl(relativePath: string): string {
+  return `/api/files/${relativePath.split('/').map(encodeURIComponent).join('/')}`
+}
+
 export const api = {
   getWorkspace: (): Promise<WorkspaceResponse> =>
     request('/api/workspace', workspaceResponseSchema),
   listFiles: (): Promise<FilesResponse> => request('/api/files', filesResponseSchema),
+  readFile: (relativePath: string): Promise<FileContentResponse> =>
+    request(fileUrl(relativePath), fileContentResponseSchema),
   getDiagram: (): Promise<DiagramResponse> =>
     request('/api/diagram', diagramResponseSchema),
 }

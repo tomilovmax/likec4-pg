@@ -46,6 +46,15 @@ export async function buildApp(
   app.get('/api/health', async () => ({ ok: true }))
   app.get('/api/workspace', () => workspace.getWorkspace())
   app.get('/api/files', () => workspace.listFiles())
+  // REQ-05: чтение файла по workspace-относительному пути. Wildcard-параметр
+  // приходит от Fastify уже URL-decoded и уходит в общий path guard REQ-03.
+  app.get<{ Params: { '*': string } }>('/api/files/*', async (request, reply) => {
+    const content = await workspace.readFile(request.params['*'])
+    // Strong ETag с тем же token, что в теле: база для optimistic save (REQ-07).
+    reply.header('etag', `"${content.version}"`)
+    reply.header('cache-control', 'no-store')
+    return content
+  })
   app.get('/api/diagram', () => workspace.getDiagram())
 
   if (options.staticRoot !== undefined) {

@@ -164,3 +164,54 @@ describe('REQ-04 workspace file tree', () => {
     expect(await provider.listFiles()).toEqual({ items: [] })
   })
 })
+
+describe('REQ-05 file content', () => {
+  it('returns literal content, language and a content-derived version', async () => {
+    const workspaceRoot = await temporaryWorkspace()
+    const content = '// заметка\r\nmodel {}\r\n'
+    await writeFile(path.join(workspaceRoot, 'relations.likec4'), content, 'utf8')
+    await writeFile(path.join(workspaceRoot, 'likec4.config.json'), '{ "name": "demo" }', 'utf8')
+
+    const provider = new LocalWorkspaceProvider(workspaceRoot)
+    const [source, config, sourceAgain] = await Promise.all([
+      provider.readFile('relations.likec4'),
+      provider.readFile('likec4.config.json'),
+      provider.readFile('relations.likec4'),
+    ])
+
+    expect(source.content).toBe(content)
+    expect(source.language).toBe('likec4')
+    expect(source.path).toBe('relations.likec4')
+    // Версия стабильна для одинакового содержимого.
+    expect(sourceAgain.version).toBe(source.version)
+    expect(source.version).toMatch(/^[0-9a-f]{64}$/)
+    expect(config.language).toBe('config')
+    expect(JSON.stringify(source)).not.toContain(workspaceRoot)
+  })
+
+  it('reads an internal symlink by its real relative path', async () => {
+    const workspaceRoot = await temporaryWorkspace()
+    await mkdir(path.join(workspaceRoot, 'model'))
+    await writeFile(path.join(workspaceRoot, 'model/spec.c4'), 'model {}', 'utf8')
+    await symlink('model/spec.c4', path.join(workspaceRoot, 'spec-link.c4'))
+
+    const response = await new LocalWorkspaceProvider(workspaceRoot).readFile('spec-link.c4')
+
+    expect(response.content).toBe('model {}')
+    expect(response.path).toBe('model/spec.c4')
+    expect(response.name).toBe('spec.c4')
+  })
+
+  it('refuses to read through a symlink outside the workspace', async () => {
+    const workspaceRoot = await temporaryWorkspace()
+    const externalFile = await fileOutsideWorkspace('secret.c4', 'secret')
+    await symlink(externalFile, path.join(workspaceRoot, 'escape.c4'))
+
+    await expect(
+      new LocalWorkspaceProvider(workspaceRoot).readFile('escape.c4'),
+    ).rejects.toMatchObject({
+      statusCode: 403,
+      code: 'PATH_OUTSIDE_WORKSPACE',
+    })
+  })
+})

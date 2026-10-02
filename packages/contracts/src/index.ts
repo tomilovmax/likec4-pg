@@ -6,6 +6,7 @@ export const apiErrorCodeSchema = z.enum([
   'VALIDATION_ERROR',
   'INVALID_PATH',
   'PATH_OUTSIDE_WORKSPACE',
+  'UNSUPPORTED_FILE',
 ])
 
 export const apiErrorSchema = z.object({
@@ -44,6 +45,19 @@ export const filesResponseSchema = z.object({
 
 export type FileEntry = z.infer<typeof fileEntrySchema>
 export type FilesResponse = z.infer<typeof filesResponseSchema>
+
+// REQ-05: буквальный UTF-8 текст разрешённого файла и стабильный version
+// token текущего содержимого (sha256 от байтов) для последующего optimistic
+// save (REQ-07). Тот же token дублируется заголовком ETag.
+export const fileContentResponseSchema = z.object({
+  path: z.string(),
+  name: z.string(),
+  language: z.enum(['likec4', 'config']),
+  content: z.string(),
+  version: z.string().length(64),
+})
+
+export type FileContentResponse = z.infer<typeof fileContentResponseSchema>
 
 export const diagramResponseSchema = z.object({
   status: z.enum(['empty', 'ready']),

@@ -3,7 +3,9 @@
 
 specification {
   element requirement {
-    shape rectangle
+    style {
+      shape rectangle
+    }
   }
 }
 
