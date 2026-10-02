@@ -4,6 +4,8 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
 
+import { projectResponseSchema } from '@likec4-web-ide/contracts'
+
 import { LocalWorkspaceProvider } from './adapters/local-workspace.js'
 import { buildApp } from './app.js'
 
@@ -316,6 +318,105 @@ describe('REQ-05 API', () => {
 
       expect(response.statusCode).toBe(400)
       expect(response.json().error.code).toBe('INVALID_PATH')
+    } finally {
+      await app.close()
+    }
+  })
+})
+
+describe('REQ-14 API', () => {
+  // Multi-file LikeC4-проект: config + specification + model + views, включая
+  // вложенные каталоги и cross-file references (`extra` в model/extra.c4
+  // ссылается на `dev` из model.c4; view dev-extra включает оба).
+  async function buildAppWithMultiFileProject() {
+    const { app, workspaceRoot } = await buildConfiguredApp()
+    await mkdir(path.join(workspaceRoot, 'model'))
+    await mkdir(path.join(workspaceRoot, 'views'))
+    const files: Array<[string, string]> = [
+      ['likec4.config.json', '{"name":"fixture"}'],
+      ['specification.c4', 'specification {\n  element requirement\n  element subsystem\n}\n'],
+      ['model.c4', "model {\n  dev = requirement {\n    title 'Dev'\n  }\n  core = subsystem {\n    title 'Core'\n    -> dev 'реализует'\n  }\n}\n"],
+      ['model/extra.c4', "model {\n  extra = subsystem {\n    title 'Extra'\n    -> dev 'расширяет'\n  }\n}\n"],
+      ['views.c4', "views {\n  view overview {\n    title 'Overview'\n    include *\n  }\n}\n"],
+      ['views/extra.c4', "views {\n  view dev-extra {\n    title 'Dev and Extra'\n    include dev, extra\n  }\n}\n"],
+    ]
+    for (const [relativePath, content] of files) {
+      await writeFile(path.join(workspaceRoot, relativePath), content, 'utf8')
+    }
+    return { app, workspaceRoot }
+  }
+
+  it('returns the whole multi-file model with workspace-relative data only', async () => {
+    const { app } = await buildAppWithMultiFileProject()
+
+    try {
+      const response = await app.inject({ method: 'GET', url: '/api/project' })
+
+      expect(response.statusCode).toBe(200)
+      expect(response.headers['cache-control']).toBe('no-store')
+      const body = projectResponseSchema.parse(response.json())
+      expect(body.status).toBe('ok')
+      if (body.status !== 'ok') {
+        return
+      }
+      // Implicit view `index` добавляется версией LikeC4 1.59.4.
+      expect(body.views).toEqual([
+        { id: 'dev-extra', title: 'Dev and Extra' },
+        { id: 'index', title: 'Landscape view' },
+        { id: 'overview', title: 'Overview' },
+      ])
+      expect(body.elements).toEqual([
+        { id: 'core', kind: 'subsystem', title: 'Core' },
+        { id: 'dev', kind: 'requirement', title: 'Dev' },
+        { id: 'extra', kind: 'subsystem', title: 'Extra' },
+      ])
+      expect(JSON.stringify(body)).not.toContain(tmpdir())
+    } finally {
+      await app.close()
+    }
+  })
+
+  it('keeps unopened files in the parsing context after opening a single file', async () => {
+    const { app } = await buildAppWithMultiFileProject()
+
+    try {
+      const opened = await app.inject({ method: 'GET', url: '/api/files/model.c4' })
+      expect(opened.statusCode).toBe(200)
+
+      const project = await app.inject({ method: 'GET', url: '/api/project' })
+      const body = projectResponseSchema.parse(project.json())
+      expect(body.status).toBe('ok')
+      if (body.status !== 'ok') {
+        return
+      }
+      // View и элемент из файлов, которые не открывались, остаются в модели.
+      expect(body.views.map((view) => view.id)).toContain('dev-extra')
+      expect(body.elements.map((element) => element.id)).toContain('extra')
+    } finally {
+      await app.close()
+    }
+  })
+
+  it('reports an invalid project as 200 with diagnostics, not as a transport error', async () => {
+    const { app, workspaceRoot } = await buildConfiguredApp()
+    await writeFile(
+      path.join(workspaceRoot, 'broken.c4'),
+      'model {\n  missing = nowhere {\n}\n',
+      'utf8',
+    )
+
+    try {
+      const response = await app.inject({ method: 'GET', url: '/api/project' })
+
+      expect(response.statusCode).toBe(200)
+      const body = projectResponseSchema.parse(response.json())
+      expect(body.status).toBe('invalid')
+      if (body.status !== 'invalid') {
+        return
+      }
+      expect(body.diagnostics.length).toBeGreaterThan(0)
+      expect(JSON.stringify(body)).not.toContain(workspaceRoot)
+      expect(JSON.stringify(body)).not.toContain(tmpdir())
     } finally {
       await app.close()
     }

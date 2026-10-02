@@ -291,7 +291,7 @@ model {
     '''
   }
 
-  req_workspace_loader = requirement_open {
+  req_workspace_loader = requirement_met {
     title 'REQ-14 · Загрузка полного multi-file LikeC4 проекта'
     summary 'Backend или frontend загружает все относящиеся файлы workspace как одну LikeC4 model, а не как одиночный открытый файл.'
     description '''
@@ -300,11 +300,11 @@ model {
       specification, model и views. Интеграция не зависит от Git repository.
 
       Критерии приёмки:
-      - [ ] проект с likec4.config.json, specification.c4, model.c4 и views.c4 загружается как единая model
-      - [ ] вложенные model/ и views/ directories участвуют по правилам выбранной версии LikeC4
-      - [ ] открытие одного file не исключает другие files из parsing context
-      - [ ] версия пакетов и вызванный официальный API зафиксированы в docs/architecture.md
-      - [ ] integration test использует fixture с cross-file references и как минимум двумя views
+      - [x] проект с likec4.config.json, specification.c4, model.c4 и views.c4 загружается как единая model
+      - [x] вложенные model/ и views/ directories участвуют по правилам выбранной версии LikeC4
+      - [x] открытие одного file не исключает другие files из parsing context
+      - [x] версия пакетов и вызванный официальный API зафиксированы в docs/architecture.md
+      - [x] integration test использует fixture с cross-file references и как минимум двумя views
     '''
     -> req_diagram_preview 'Полная модель нужна renderer’у'
     -> req_view_selector 'Полная модель содержит views'

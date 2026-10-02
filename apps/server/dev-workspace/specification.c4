@@ -1,0 +1,14 @@
+// Спецификация проекта dev-workspace (REQ-14: multi-file проект).
+
+specification {
+  element requirement {
+    style {
+      shape rectangle
+    }
+  }
+  element subsystem {
+    style {
+      shape rectangle
+    }
+  }
+}

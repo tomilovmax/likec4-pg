@@ -1,0 +1,9 @@
+// Вторая view из вложенного каталога (REQ-14): минимум две views в проекте,
+// include ссылается на элементы из разных файлов.
+
+views {
+  view dev-extra {
+    title 'Dev и Extra'
+    include dev, extra
+  }
+}

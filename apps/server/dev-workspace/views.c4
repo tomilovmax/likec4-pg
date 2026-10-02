@@ -1,0 +1,8 @@
+// Views dev-workspace; элементы приходят из model.c4 и model/extra.c4.
+
+views {
+  view overview {
+    title 'Overview'
+    include *
+  }
+}

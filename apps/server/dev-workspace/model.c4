@@ -1,0 +1,11 @@
+// Модель dev-workspace; kind'ы определены в specification.c4.
+
+model {
+  dev = requirement {
+    title 'Dev'
+  }
+  core = subsystem {
+    title 'Core'
+    -> dev 'реализует'
+  }
+}
