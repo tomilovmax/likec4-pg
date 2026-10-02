@@ -8,6 +8,7 @@ import type {
 
 import type { WorkspacePort } from '../domain/workspace-port.js'
 import { WorkspacePathResolver } from '../workspace-paths.js'
+import { listWorkspaceFiles } from '../workspace-tree.js'
 
 export class LocalWorkspaceProvider implements WorkspacePort {
   // Единственный path guard (REQ-03): файловые операции REQ-04+ принимают от
@@ -25,9 +26,10 @@ export class LocalWorkspaceProvider implements WorkspacePort {
     }
   }
 
-  // Placeholder до REQ-04: дерево разрешённых файлов ещё не строится.
+  // REQ-04: дерево разрешённых LikeC4-файлов; обход идёт от доверенного корня
+  // resolver’а, клиентский путь не участвует.
   async listFiles(): Promise<FilesResponse> {
-    return { items: [] }
+    return { items: await listWorkspaceFiles(this.paths) }
   }
 
   // Placeholder до REQ-15: diagram preview ещё не подключён.

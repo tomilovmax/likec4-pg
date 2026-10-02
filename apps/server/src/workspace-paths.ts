@@ -125,13 +125,14 @@ export class WorkspacePathResolver {
     }
   }
 
-  private trustedRoot(): Promise<string> {
+  /** realpath workspace root — доверенная точка отсчёта для обхода дерева (REQ-04). */
+  trustedRoot(): Promise<string> {
     this.rootRealPathPromise ??= realpath(this.workspaceRoot)
     return this.rootRealPathPromise
   }
 }
 
-function isWithin(root: string, candidate: string): boolean {
+export function isWithin(root: string, candidate: string): boolean {
   return candidate === root || candidate.startsWith(root + path.sep)
 }
 
