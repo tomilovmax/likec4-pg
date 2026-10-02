@@ -83,7 +83,7 @@ model {
     -> req_container_deployment 'Контейнер передаёт конфигурацию'
   }
 
-  req_path_confinement = requirement_open {
+  req_path_confinement = requirement_met {
     title 'REQ-03 · Изолированные файловые пути workspace'
     summary 'Все файловые действия принимают только относительный path и физически не выходят за LIKEC4_WORKSPACE.'
     description '''
@@ -92,12 +92,12 @@ model {
       symlink существующей цели, а для создаваемой цели проверяет realpath parent.
 
       Критерии приёмки:
-      - [ ] ../, абсолютный путь, URL-encoded traversal и symlink за пределы root
+      - [x] ../, абсолютный путь, URL-encoded traversal и symlink за пределы root
             получают 4xx error
-      - [ ] list, read, write, create, mkdir, rename и delete используют один guard
-      - [ ] запрещённый путь не раскрывает содержимое или абсолютный путь внешнего файла
-      - [ ] автоматические tests проверяют минимум ../../etc/passwd и symlink наружу
-      - [ ] endpoint не выполняет shell-команду с пользовательским DSL или path
+      - [x] list, read, write, create, mkdir, rename и delete используют один guard
+      - [x] запрещённый путь не раскрывает содержимое или абсолютный путь внешнего файла
+      - [x] автоматические tests проверяют минимум ../../etc/passwd и symlink наружу
+      - [x] endpoint не выполняет shell-команду с пользовательским DSL или path
     '''
     -> req_file_tree 'Защищает построение дерева'
     -> req_open_file 'Защищает чтение'

@@ -4,6 +4,8 @@ export const apiErrorCodeSchema = z.enum([
   'INTERNAL_ERROR',
   'NOT_FOUND',
   'VALIDATION_ERROR',
+  'INVALID_PATH',
+  'PATH_OUTSIDE_WORKSPACE',
 ])
 
 export const apiErrorSchema = z.object({
