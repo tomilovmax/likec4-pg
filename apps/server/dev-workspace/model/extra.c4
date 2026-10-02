@@ -1,0 +1,9 @@
+// Вложенный каталог модели входит в parsing context (REQ-14).
+// `dev` определён в model.c4 — cross-file reference.
+
+model {
+  extra = subsystem {
+    title 'Extra'
+    -> dev 'расширяет'
+  }
+}

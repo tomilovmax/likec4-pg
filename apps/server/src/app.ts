@@ -55,6 +55,12 @@ export async function buildApp(
     reply.header('cache-control', 'no-store')
     return content
   })
+  // REQ-14: полная multi-file LikeC4 model официальным API upstream;
+  // без path-параметров — parsing context всегда весь workspace.
+  app.get('/api/project', async (_request, reply) => {
+    reply.header('cache-control', 'no-store')
+    return await workspace.getProject()
+  })
   app.get('/api/diagram', () => workspace.getDiagram())
 
   if (options.staticRoot !== undefined) {

@@ -65,3 +65,51 @@ export const diagramResponseSchema = z.object({
 })
 
 export type DiagramResponse = z.infer<typeof diagramResponseSchema>
+
+// REQ-14: полная multi-file модель проекта, загруженная официальным API LikeC4.
+// Ветка «ok» отдаётся только при пустом списке ошибок парсинга: половинную
+// модель клиент не получает (основа для REQ-15/18 — preview не выдаёт прежнюю
+// диаграмму за актуальную после неудачного reparse).
+export const projectViewSchema = z.object({
+  id: z.string(),
+  title: z.string().nullable(),
+})
+
+export const projectElementSchema = z.object({
+  id: z.string(),
+  kind: z.string(),
+  title: z.string(),
+})
+
+const projectDiagnosticPositionSchema = z.object({
+  line: z.number().int().nonnegative(),
+  character: z.number().int().nonnegative(),
+})
+
+export const projectDiagnosticSchema = z.object({
+  message: z.string(),
+  // Workspace-относительный путь источника; опускается, если файл вне корня
+  // (например, диагностика не привязана к документу workspace).
+  path: z.string().optional(),
+  range: z.object({
+    start: projectDiagnosticPositionSchema,
+    end: projectDiagnosticPositionSchema,
+  }),
+})
+
+export const projectResponseSchema = z.discriminatedUnion('status', [
+  z.object({
+    status: z.literal('ok'),
+    views: z.array(projectViewSchema),
+    elements: z.array(projectElementSchema),
+  }),
+  z.object({
+    status: z.literal('invalid'),
+    diagnostics: z.array(projectDiagnosticSchema),
+  }),
+])
+
+export type ProjectView = z.infer<typeof projectViewSchema>
+export type ProjectElement = z.infer<typeof projectElementSchema>
+export type ProjectDiagnostic = z.infer<typeof projectDiagnosticSchema>
+export type ProjectResponse = z.infer<typeof projectResponseSchema>
