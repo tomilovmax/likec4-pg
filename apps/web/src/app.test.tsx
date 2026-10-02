@@ -4,6 +4,10 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { App } from './app'
+import { readFakeModel, resetForTest } from './editor/monaco-instance.fake'
+
+// Monaco не работает в jsdom: подменяется единственная точка работы с ним.
+vi.mock('./editor/monaco-instance', async () => import('./editor/monaco-instance.fake'))
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -15,6 +19,7 @@ function jsonResponse(body: unknown, status = 200): Response {
 afterEach(() => {
   cleanup()
   vi.unstubAllGlobals()
+  resetForTest()
 })
 
 describe('REQ-01 desktop shell', () => {
@@ -106,9 +111,9 @@ describe('REQ-01 desktop shell', () => {
   })
 })
 
-/** Буквальный code view открытого файла (REQ-05). */
-function openedCode(editor: HTMLElement): HTMLElement | null {
-  return editor.querySelector('.opened-file__code')
+/** Редактор открытого файла: fake-Monaco рендерит textarea (REQ-05/06). */
+function editorTextarea(editor: HTMLElement): HTMLTextAreaElement {
+  return within(editor).getByRole('textbox') as HTMLTextAreaElement
 }
 
 const nestedFilesResponse = {
@@ -211,7 +216,7 @@ describe('REQ-04 files panel', () => {
     fireEvent.click(specification)
 
     await waitFor(() => {
-      expect(openedCode(editor)?.textContent).toContain('model {}')
+      expect(editorTextarea(editor).value).toContain('model {}')
     })
     expect(specification.getAttribute('aria-current')).toBe('true')
 
@@ -279,14 +284,13 @@ describe('REQ-05 open file', () => {
 
     const { editor } = await openSpecificationFile()
 
-    const code = await waitFor(() => {
-      const element = openedCode(editor)
-      expect(element).toBeTruthy()
-      return element as HTMLElement
-    })
+    const textarea = await waitFor(() => editorTextarea(editor))
     // Текст проходит в редактор буквально: CRLF, комментарии и форматирование
-    // не меняются, format-on-load отсутствует.
-    expect(code.textContent).toBe(literalContent)
+    // не меняются, format-on-load отсутствует. textarea.value нормализует CRLF
+    // по спецификации HTML, поэтому буквальность проверяется на модели
+    // редактора (настоящая Monaco хранит buffer так же).
+    expect(readFakeModel('model/specification.c4')).toBe(literalContent)
+    expect(textarea.value).toBe(literalContent.replaceAll('\r\n', '\n'))
     expect(within(editor).getByText(/версия ab12cd34ef56/)).toBeTruthy()
   })
 
@@ -326,8 +330,152 @@ describe('REQ-05 open file', () => {
     fireEvent.click(within(editor).getByRole('button', { name: 'Повторить' }))
 
     await waitFor(() => {
-      expect(openedCode(editor)?.textContent).toBe('model {}')
+      expect(editorTextarea(editor).value).toBe('model {}')
     })
     expect(fileRequests).toBe(2)
+  })
+})
+
+describe('REQ-06 editor buffer', () => {
+  const savedSpecification = 'specification {\n  demo = "λ"\n}'
+  const savedOverview = 'view overview {\n}'
+  const editedSpecification = 'specification {\n  demo = "edited"\n}'
+
+  function stubApiWithSources(diagram: () => Promise<Response> = () =>
+    Promise.resolve(jsonResponse({ status: 'empty', reason: 'NO_WORKSPACE_VIEW' })),
+  ) {
+    const fetchMock = vi.fn((path: string): Promise<Response> => {
+      if (path === '/api/files') {
+        return Promise.resolve(jsonResponse(nestedFilesResponse))
+      }
+      if (path === '/api/workspace') {
+        return Promise.resolve(
+          jsonResponse({ status: 'ready', displayName: 'architecture' }),
+        )
+      }
+      if (path === '/api/diagram') {
+        return diagram()
+      }
+      if (path === '/api/files/model/specification.c4') {
+        return Promise.resolve(
+          jsonResponse({
+            path: 'model/specification.c4',
+            name: 'specification.c4',
+            language: 'likec4',
+            content: savedSpecification,
+            version: 'c'.repeat(64),
+          }),
+        )
+      }
+      if (path === '/api/files/views/overview.likec4') {
+        return Promise.resolve(
+          jsonResponse({
+            path: 'views/overview.likec4',
+            name: 'overview.likec4',
+            language: 'likec4',
+            content: savedOverview,
+            version: 'd'.repeat(64),
+          }),
+        )
+      }
+      return Promise.reject(new Error(`unexpected fetch: ${path}`))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    return { fetchMock }
+  }
+
+  async function openFile(files: HTMLElement, name: RegExp) {
+    const entry = await waitFor(() => within(files).getByRole('button', { name }))
+    fireEvent.click(entry)
+  }
+
+  it('marks the edited buffer as unsaved and keeps the saved version visible', async () => {
+    stubApiWithSources()
+
+    render(<App />)
+
+    const files = screen.getByRole('region', { name: 'Files' })
+    const editor = screen.getByRole('region', { name: 'Code Editor' })
+
+    await openFile(files, /specification\.c4/)
+
+    const textarea = await waitFor(() => editorTextarea(editor))
+    expect(textarea.value).toBe(savedSpecification)
+    expect(within(editor).queryByText(/не сохранён/)).toBeNull()
+    expect(files.querySelector('.file-tree__dirty')).toBeNull()
+
+    fireEvent.change(textarea, { target: { value: editedSpecification } })
+
+    await waitFor(() => {
+      expect(within(editor).getByText(/не сохранён/)).toBeTruthy()
+    })
+    expect(files.querySelector('.file-tree__dirty')).toBeTruthy()
+    // Показана версия сохранённого содержимого, а не buffer’а.
+    expect(within(editor).getByText(/версия c{12}/)).toBeTruthy()
+  })
+
+  it('keeps the unsaved buffer when switching to another file and back', async () => {
+    const { fetchMock } = stubApiWithSources()
+
+    render(<App />)
+
+    const files = screen.getByRole('region', { name: 'Files' })
+    const editor = screen.getByRole('region', { name: 'Code Editor' })
+
+    await openFile(files, /specification\.c4/)
+    const specificationTextarea = await waitFor(() => editorTextarea(editor))
+    fireEvent.change(specificationTextarea, { target: { value: editedSpecification } })
+    await waitFor(() => {
+      expect(within(editor).getByText(/не сохранён/)).toBeTruthy()
+    })
+
+    await openFile(files, /overview\.likec4/)
+    await waitFor(() => {
+      expect(editorTextarea(editor).value).toBe(savedOverview)
+    })
+    expect(within(editor).queryByText(/не сохранён/)).toBeNull()
+    expect(files.querySelectorAll('.file-tree__dirty')).toHaveLength(1)
+
+    await openFile(files, /specification\.c4/)
+    await waitFor(() => {
+      expect(editorTextarea(editor).value).toBe(editedSpecification)
+    })
+    await waitFor(() => {
+      expect(within(editor).getByText(/не сохранён/)).toBeTruthy()
+    })
+
+    // Возврат к файлу не перечитывает его: unsaved buffer не затирается.
+    expect(
+      fetchMock.mock.calls.filter(([path]) => path === '/api/files/model/specification.c4'),
+    ).toHaveLength(1)
+  })
+
+  it('stays editable when the diagram preview request fails', async () => {
+    stubApiWithSources(() =>
+      Promise.resolve(
+        jsonResponse(
+          { error: { code: 'INTERNAL_ERROR', message: 'Diagram request failed' } },
+          500,
+        ),
+      ),
+    )
+
+    render(<App />)
+
+    const files = screen.getByRole('region', { name: 'Files' })
+    const editor = screen.getByRole('region', { name: 'Code Editor' })
+    const diagram = screen.getByRole('region', { name: 'Diagram' })
+
+    await openFile(files, /specification\.c4/)
+
+    await waitFor(() => {
+      expect(within(diagram).getByRole('alert').textContent).toContain('Diagram request failed')
+    })
+
+    const textarea = await waitFor(() => editorTextarea(editor))
+    fireEvent.change(textarea, { target: { value: editedSpecification } })
+    await waitFor(() => {
+      expect(within(editor).getByText(/не сохранён/)).toBeTruthy()
+    })
   })
 })

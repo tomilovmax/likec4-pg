@@ -192,18 +192,48 @@ button:hover {
   color: #6f7d95;
 }
 
-.opened-file__code {
+.opened-file__dirty {
+  border-radius: 0.25rem;
+  background: #3a301d;
+  padding: 0.05rem 0.35rem;
+  color: #ffb86b;
+  font-size: 0.72rem;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.code-editor-host {
   flex: 1;
   min-height: 16rem;
-  margin: 0;
-  overflow: auto;
+  overflow: hidden;
   border: 1px solid #343b4a;
   border-radius: 0.4rem;
   background: #171a21;
+}
+
+/* Fake-реализация Monaco для jsdom-тестов кладёт textarea в тот же контейнер. */
+.code-editor-host > textarea {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: transparent;
   color: #d7dce7;
   font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
   font-size: 0.85rem;
   line-height: 1.55;
   padding: 0.75rem;
+  resize: none;
   white-space: pre;
+}
+
+.file-tree__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-tree__dirty {
+  flex: none;
+  color: #ffb86b;
+  font-size: 0.75rem;
 }
