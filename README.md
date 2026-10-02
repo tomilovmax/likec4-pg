@@ -1,6 +1,6 @@
 # LikeC4 Web IDE
 
-Self-hosted browser IDE для одного LikeC4 workspace. Реализованы REQ-01 (трёхпанельный app shell: Files, Code Editor, Diagram на одном URL) и REQ-02 (настроенный и проверенный workspace).
+Self-hosted browser IDE для одного LikeC4 workspace. Реализованы REQ-01 (трёхпанельный app shell: Files, Code Editor, Diagram на одном URL), REQ-02 (настроенный и проверенный workspace), REQ-03 (изолированные файловые пути workspace) и REQ-04 (навигация по разрешённым файлам workspace).
 
 Browser получает данные только через backend HTTP API. Он не получает прямой доступ к файловой системе хоста и не может выбрать другой workspace: путь задаёт только оператор на сервере.
 
@@ -45,9 +45,16 @@ curl http://localhost:3000/api/workspace
 # {"status":"ready","displayName":"likec4-project"}
 ```
 
+Проверить дерево разрешённых файлов (только относительные пути; `.c4`/`.likec4` помечены как `likec4`, конфигурационные файлы LikeC4 — как `config`):
+
+```bash
+curl http://localhost:3000/api/files
+# {"items":[{"path":"model","name":"model","kind":"directory"},{"path":"model/spec.c4","name":"spec.c4","kind":"file","language":"likec4"},{"path":"likec4.config.json","name":"likec4.config.json","kind":"file","language":"config"}]}
+```
+
 ## Текущее состояние
 
-REQ-01 предоставляет трёхпанельный app shell и независимые loading/empty/error состояния панелей. REQ-02 добавляет server-side конфигурацию: сервер стартует только с существующим читаемым каталогом из `LIKEC4_WORKSPACE` и использует его как единственный filesystem root. `GET /api/files` и `GET /api/diagram` пока возвращают безопасные placeholder-ответы: дерево файлов, редактор LikeC4, parsing и diagram preview будут добавляться отдельными требованиями.
+REQ-01 предоставляет трёхпанельный app shell и независимые loading/empty/error состояния панелей. REQ-02 добавляет server-side конфигурацию: сервер стартует только с существующим читаемым каталогом из `LIKEC4_WORKSPACE` и использует его как единственный filesystem root. REQ-03 добавляет единый path guard: все файловые операции принимают только относительные пути и физически не выходят за пределы workspace — `..`, абсолютные пути, URL-encoded traversal и symlink наружу отклоняются с 4xx, не раскрывая путей хоста. REQ-04 наполняет панель Files: `GET /api/files` возвращает вложенное дерево только из разрешённых LikeC4-файлов (`.c4`, `.likec4` и конфигурационные файлы LikeC4; скрытые записи, бинарные и нерелевантные файлы, а также ветки без LikeC4-файлов не попадают в дерево), клик по файлу открывает его по относительному пути без каких-либо абсолютных путей хоста. `GET /api/diagram` пока возвращает безопасный placeholder-ответ: редактор LikeC4, parsing и diagram preview будут добавляться отдельными требованиями.
 
 MVP не включает Git, authentication, database, collaboration, history, AI, Kubernetes или CI/CD deployment.
 

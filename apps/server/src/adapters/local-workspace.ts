@@ -7,9 +7,17 @@ import type {
 } from '@likec4-web-ide/contracts'
 
 import type { WorkspacePort } from '../domain/workspace-port.js'
+import { WorkspacePathResolver } from '../workspace-paths.js'
+import { listWorkspaceFiles } from '../workspace-tree.js'
 
 export class LocalWorkspaceProvider implements WorkspacePort {
-  constructor(private readonly workspaceRoot: string) {}
+  // Единственный path guard (REQ-03): файловые операции REQ-04+ принимают от
+  // клиента только относительный путь и резолвят его исключительно через него.
+  private readonly paths: WorkspacePathResolver
+
+  constructor(private readonly workspaceRoot: string) {
+    this.paths = new WorkspacePathResolver(workspaceRoot)
+  }
 
   async getWorkspace(): Promise<WorkspaceResponse> {
     return {
@@ -18,9 +26,10 @@ export class LocalWorkspaceProvider implements WorkspacePort {
     }
   }
 
-  // Placeholder до REQ-04: дерево разрешённых файлов ещё не строится.
+  // REQ-04: дерево разрешённых LikeC4-файлов; обход идёт от доверенного корня
+  // resolver’а, клиентский путь не участвует.
   async listFiles(): Promise<FilesResponse> {
-    return { items: [] }
+    return { items: await listWorkspaceFiles(this.paths) }
   }
 
   // Placeholder до REQ-15: diagram preview ещё не подключён.

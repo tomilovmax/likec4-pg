@@ -91,7 +91,79 @@ button:hover {
   font-size: 0.875rem;
 }
 
-.file-list {
+.file-tree {
   margin: 0;
-  padding-left: 1.1rem;
+  padding: 0;
+  list-style: none;
+}
+
+.file-tree .file-tree {
+  margin-left: 0.35rem;
+  padding-left: 0.75rem;
+  border-left: 1px solid #2a3140;
+}
+
+.file-tree__item {
+  margin: 0.08rem 0;
+}
+
+.file-tree__directory {
+  display: block;
+  padding: 0.2rem 0.25rem;
+  color: #9fb0cd;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.file-tree__directory::before {
+  content: "▾";
+  margin-right: 0.4rem;
+  color: #6f7d95;
+  font-size: 0.75rem;
+}
+
+.file-tree__open {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  width: 100%;
+  border: 0;
+  border-radius: 0.3rem;
+  background: transparent;
+  padding: 0.22rem 0.25rem;
+  text-align: left;
+  font: inherit;
+}
+
+.file-tree__open:hover {
+  background: #262d3b;
+}
+
+.file-tree__open[aria-current="true"] {
+  background: #2b3a55;
+  outline: 1px solid #3d5a8a;
+}
+
+.file-tree__badge {
+  flex: none;
+  border: 1px solid #2f5843;
+  border-radius: 0.25rem;
+  background: #1f3a2f;
+  padding: 0.05rem 0.3rem;
+  color: #7dd8a8;
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.file-tree__badge[data-language="config"] {
+  border-color: #5a4a26;
+  background: #3a301d;
+  color: #e3c56b;
+}
+
+.file-tree__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
