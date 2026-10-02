@@ -1,0 +1,16 @@
+{
+  "name": "@likec4-web-ide/web",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --port 3000",
+    "build": "tsc --noEmit -p tsconfig.json && vite build",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@likec4-web-ide/contracts": "file:../../packages/contracts",
+    "react": "19.3.0",
+    "react-dom": "19.3.0"
+  }
+}
