@@ -10,6 +10,9 @@
     "apps/*",
     "packages/*"
   ],
+  "overrides": {
+    "dompurify": "3.4.16"
+  },
   "scripts": {
     "dev": "npm run build --workspace @likec4-web-ide/contracts && concurrently --kill-others-on-fail --names server,web --prefix-colors blue,green \"npm run dev --workspace @likec4-web-ide/server\" \"npm run dev --workspace @likec4-web-ide/web\"",
     "build": "npm run build --workspace @likec4-web-ide/contracts && npm run build --workspace @likec4-web-ide/web && npm run build --workspace @likec4-web-ide/server",

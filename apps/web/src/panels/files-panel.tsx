@@ -9,11 +9,13 @@ import { buildFileTree, type FileTreeNode } from '../file-tree'
 import { useResource } from '../hooks/use-resource'
 
 interface FilesPanelProps {
+  /** Файлы с несохранёнными изменениями (REQ-06): заметны до возврата к файлу. */
+  dirtyPaths: ReadonlySet<string>
   selectedPath: string | null
   onOpenFile: (file: FileEntry) => void
 }
 
-export function FilesPanel({ selectedPath, onOpenFile }: FilesPanelProps) {
+export function FilesPanel({ dirtyPaths, selectedPath, onOpenFile }: FilesPanelProps) {
   const loadFiles = useCallback(() => api.listFiles(), [])
   const { state, reload } = useResource(loadFiles)
 
@@ -34,6 +36,7 @@ export function FilesPanel({ selectedPath, onOpenFile }: FilesPanelProps) {
       {state.status === 'ready' && state.data.items.length > 0 && (
         <FileTreeList
           nodes={buildFileTree(state.data.items)}
+          dirtyPaths={dirtyPaths}
           selectedPath={selectedPath}
           onOpenFile={onOpenFile}
         />
@@ -44,10 +47,12 @@ export function FilesPanel({ selectedPath, onOpenFile }: FilesPanelProps) {
 
 function FileTreeList({
   nodes,
+  dirtyPaths,
   selectedPath,
   onOpenFile,
 }: {
   nodes: FileTreeNode[]
+  dirtyPaths: ReadonlySet<string>
   selectedPath: string | null
   onOpenFile: (file: FileEntry) => void
 }) {
@@ -59,6 +64,7 @@ function FileTreeList({
             <span className="file-tree__directory">{node.entry.name}</span>
             <FileTreeList
               nodes={node.children}
+              dirtyPaths={dirtyPaths}
               selectedPath={selectedPath}
               onOpenFile={onOpenFile}
             />
@@ -77,6 +83,11 @@ function FileTreeList({
                 {node.entry.language === 'config' ? 'CFG' : 'C4'}
               </span>
               <span className="file-tree__name">{node.entry.name}</span>
+              {dirtyPaths.has(node.entry.path) && (
+                <span aria-hidden="true" className="file-tree__dirty" title="Есть несохранённые изменения">
+                  ●
+                </span>
+              )}
             </button>
           </li>
         ),
