@@ -1,6 +1,7 @@
 import path from 'node:path'
 
 import type {
+  CreateDirectoryResponse,
   DiagramResponse,
   FileContentResponse,
   FilesResponse,
@@ -11,6 +12,7 @@ import type {
 import type { WorkspacePort } from '../domain/workspace-port.js'
 import { WorkspacePathResolver } from '../workspace-paths.js'
 import {
+  createWorkspaceDirectory,
   createWorkspaceFile,
   readWorkspaceFile,
   saveWorkspaceFile,
@@ -70,6 +72,14 @@ export class LocalWorkspaceProvider implements WorkspacePort {
   // что и у остальных файловых операций.
   async createFile(parent: string, name: string): Promise<FileContentResponse> {
     return createWorkspaceFile(this.paths, { parent, name })
+  }
+
+  // REQ-09: создание одного каталога без recursion; тот же path guard REQ-03.
+  async createDirectory(
+    parent: string,
+    name: string,
+  ): Promise<CreateDirectoryResponse> {
+    return createWorkspaceDirectory(this.paths, { parent, name })
   }
 
   // REQ-14: полная multi-file модель из доверенного realpath-корня REQ-03;

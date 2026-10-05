@@ -90,6 +90,25 @@ export type CreateFileResponse = FileContentResponse
 
 export type FileContentResponse = z.infer<typeof fileContentResponseSchema>
 
+// REQ-09: создание каталога. client → POST /api/directories { parent, name };
+// `parent` — workspace-относительный путь существующего каталога ('' — корень
+// workspace), `name` — базовое имя создаваемого каталога. Рекурсивное создание
+// не поддерживается: parent обязан существовать, создаётся ровно один каталог.
+export const createDirectoryRequestSchema = z.object({
+  parent: z.string(),
+  name: z.string(),
+})
+export type CreateDirectoryRequest = z.infer<typeof createDirectoryRequestSchema>
+
+// Успешный ответ — entry каталога: у каталога нет содержимого и version token,
+// поэтому это не FileContentResponse.
+export const createDirectoryResponseSchema = z.object({
+  path: z.string(),
+  name: z.string(),
+  kind: z.literal('directory'),
+})
+export type CreateDirectoryResponse = z.infer<typeof createDirectoryResponseSchema>
+
 // REQ-14: полная multi-file модель проекта, загруженная официальным API LikeC4.
 // Ветка «ok» отдаётся только при пустом списке ошибок парсинга: половинную
 // модель клиент не получает (основа для REQ-15/18 — preview не выдаёт прежнюю

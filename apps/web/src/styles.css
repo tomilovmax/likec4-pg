@@ -93,24 +93,40 @@ button:hover {
   font-size: 0.875rem;
 }
 
-/* REQ-08: форма создания нового .c4 файла над деревом. */
-.create-file__toggle {
+/* REQ-08/09: формы создания файла и каталога над деревом. Toggle-кнопки
+   делят ряд, открытая форма занимает его целиком. */
+.files-panel__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
   margin: 0 0 0.75rem;
-  width: 100%;
+}
+
+.files-panel__actions > * {
+  flex: 1 1 8rem;
+}
+
+.files-panel__actions > form {
+  flex-basis: 100%;
+}
+
+.create-file__toggle,
+.create-directory__toggle {
   font-size: 0.82rem;
 }
 
-.create-file {
+.create-file,
+.create-directory {
   display: grid;
   gap: 0.5rem;
-  margin: 0 0 0.9rem;
   border: 1px solid #343b4a;
   border-radius: 0.4rem;
   background: #20242e;
   padding: 0.7rem;
 }
 
-.create-file__field {
+.create-file__field,
+.create-directory__field {
   display: grid;
   gap: 0.25rem;
   color: #9fb0cd;
@@ -118,7 +134,9 @@ button:hover {
 }
 
 .create-file__select,
-.create-file__input {
+.create-file__input,
+.create-directory__select,
+.create-directory__input {
   border: 1px solid #4d5870;
   border-radius: 0.35rem;
   background: #252b37;
@@ -128,14 +146,16 @@ button:hover {
   padding: 0.4rem 0.5rem;
 }
 
-.create-file__hint {
+.create-file__hint,
+.create-directory__hint {
   margin: 0;
   color: #919aad;
   font-size: 0.75rem;
   overflow-wrap: anywhere;
 }
 
-.create-file__error {
+.create-file__error,
+.create-directory__error {
   margin: 0;
   border: 1px solid #7e4547;
   border-radius: 0.3rem;
@@ -146,12 +166,14 @@ button:hover {
   line-height: 1.4;
 }
 
-.create-file__actions {
+.create-file__actions,
+.create-directory__actions {
   display: flex;
   gap: 0.5rem;
 }
 
-.create-file__actions button {
+.create-file__actions button,
+.create-directory__actions button {
   font-size: 0.82rem;
 }
 
