@@ -1,12 +1,15 @@
 import {
   apiErrorSchema,
+  createDirectoryResponseSchema,
   createFileResponseSchema,
+  type ApiError,
+  type CreateDirectoryRequest,
+  type CreateDirectoryResponse,
   type CreateFileRequest,
   type CreateFileResponse,
   diagramResponseSchema,
   fileContentResponseSchema,
   filesResponseSchema,
-  type ApiError,
   type DiagramResponse,
   saveFileResponseSchema,
   type FileContentResponse,
@@ -85,6 +88,11 @@ export const api = {
   // REQ-08: неперезаписывающее создание нового .c4 файла в существующем каталоге.
   createFile: (payload: CreateFileRequest): Promise<CreateFileResponse> =>
     sendJson('POST', '/api/files', payload, createFileResponseSchema),
+  // REQ-09: создание одного нового каталога в существующем parent directory.
+  createDirectory: (
+    payload: CreateDirectoryRequest,
+  ): Promise<CreateDirectoryResponse> =>
+    sendJson('POST', '/api/directories', payload, createDirectoryResponseSchema),
   getDiagram: (): Promise<DiagramResponse> =>
     request('/api/diagram', diagramResponseSchema),
 }

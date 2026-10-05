@@ -19,30 +19,42 @@ export function FilesPanel({ dirtyPaths, selectedPath, onOpenFile }: FilesPanelP
   const loadFiles = useCallback(() => api.listFiles(), [])
   const { state, reload } = useResource(loadFiles)
 
+  // Каталоги для выбора parent в формах создания (REQ-08/09); после REQ-09
+  // сюда попадают и пустые каталоги — созданный каталог сразу можно выбрать.
+  const directories =
+    state.status === 'ready'
+      ? state.data.items
+          .filter((item) => item.kind === 'directory')
+          .map((item) => item.path)
+      : []
+
   return (
     <Panel title="Files">
-      {/* REQ-08: создание доступно и для пустого workspace — это единственный
-          способ появления первого .c4 файла без доступа к файловой системе. */}
-      <CreateFileControl
-        directories={
-          state.status === 'ready'
-            ? state.data.items
-                .filter((item) => item.kind === 'directory')
-                .map((item) => item.path)
-            : []
-        }
-        onCreated={(created) => {
-          // Дерево обновляется перечитыванием server state, а не локальной
-          // вставкой: UI не строит записи сам и не расходится с сервером.
-          reload()
-          onOpenFile({
-            path: created.path,
-            name: created.name,
-            kind: 'file',
-            language: 'likec4',
-          })
-        }}
-      />
+      <div className="files-panel__actions">
+        {/* REQ-08: создание доступно и для пустого workspace — это единственный
+            способ появления первого .c4 файла без доступа к файловой системе. */}
+        <CreateFileControl
+          directories={directories}
+          onCreated={(created) => {
+            // Дерево обновляется перечитыванием server state, а не локальной
+            // вставкой: UI не строит записи сам и не расходится с сервером.
+            reload()
+            onOpenFile({
+              path: created.path,
+              name: created.name,
+              kind: 'file',
+              language: 'likec4',
+            })
+          }}
+        />
+        <CreateDirectoryControl
+          directories={directories}
+          onCreated={() => {
+            // Каталог не открывается в редакторе — только перечитываем дерево.
+            reload()
+          }}
+        />
+      </div>
       {state.status === 'loading' && <p className="resource-state">Загружаем файлы…</p>}
       {state.status === 'error' && (
         <ResourceError message={state.message} onRetry={reload} />
@@ -207,6 +219,157 @@ function CreateFileControl({
         </p>
       )}
       <div className="create-file__actions">
+        <button disabled={!canSubmit} type="submit">
+          {creating ? 'Создаём…' : 'Создать'}
+        </button>
+        <button onClick={cancel} type="button">
+          Отмена
+        </button>
+      </div>
+    </form>
+  )
+}
+
+/**
+ * Валидация имени до запроса (REQ-09): имя — одиночная запись без ведущей
+ * точки (скрытый каталог не появился бы в дереве); path-подобные имена
+ * отклоняются инлайн без API-запроса.
+ */
+function resolveNewDirectoryName(
+  rawName: string,
+): { name: string | null; error: string | null } {
+  const trimmed = rawName.trim()
+  if (trimmed === '') {
+    return { name: null, error: null }
+  }
+  if (trimmed.includes('/') || trimmed.includes('\\')) {
+    return { name: null, error: 'Имя не может содержать «/» или «\\».' }
+  }
+  if (trimmed.startsWith('.')) {
+    return {
+      name: null,
+      error: 'Имя не может начинаться с точки — такая запись скрыта из дерева.',
+    }
+  }
+  return { name: trimmed, error: null }
+}
+
+function CreateDirectoryControl({
+  directories,
+  onCreated,
+}: {
+  directories: string[]
+  onCreated: () => void
+}) {
+  const [open, setOpen] = useState(false)
+  const [parent, setParent] = useState('')
+  const [name, setName] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const [creating, setCreating] = useState(false)
+
+  const resolved = resolveNewDirectoryName(name)
+  const canSubmit = resolved.name !== null && !creating
+  // Ошибка запроса приоритетнее инлайн-валидации: она появляется после submit.
+  const shownError = error ?? resolved.error
+
+  if (!open) {
+    return (
+      <button
+        className="create-directory__toggle"
+        onClick={() => {
+          setOpen(true)
+        }}
+        type="button"
+      >
+        + Новый каталог
+      </button>
+    )
+  }
+
+  const handleSubmit = (event: FormEvent) => {
+    event.preventDefault()
+    const newName = resolved.name
+    if (newName === null || creating) {
+      return
+    }
+    setCreating(true)
+    setError(null)
+    void api.createDirectory({ parent, name: newName }).then(
+      () => {
+        setOpen(false)
+        setName('')
+        setParent('')
+        setCreating(false)
+        onCreated()
+      },
+      (submitError: unknown) => {
+        setCreating(false)
+        const isConflict =
+          submitError instanceof ApiClientError &&
+          submitError.details.error.code === 'CONFLICT'
+        setError(
+          isConflict
+            ? `Каталог «${newName}» уже существует в выбранном каталоге.`
+            : submitError instanceof Error
+              ? submitError.message
+              : 'Не удалось создать каталог',
+        )
+      },
+    )
+  }
+
+  const cancel = () => {
+    setOpen(false)
+    setName('')
+    setParent('')
+    setError(null)
+  }
+
+  return (
+    <form className="create-directory" onSubmit={handleSubmit}>
+      <label className="create-directory__field">
+        Каталог
+        <select
+          className="create-directory__select"
+          onChange={(event) => {
+            setParent(event.target.value)
+            setError(null)
+          }}
+          value={parent}
+        >
+          <option value="">(корень workspace)</option>
+          {directories.map((directory) => (
+            <option key={directory} value={directory}>
+              {directory}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label className="create-directory__field">
+        Имя каталога
+        <input
+          className="create-directory__input"
+          onChange={(event) => {
+            setName(event.target.value)
+            setError(null)
+          }}
+          placeholder="notes"
+          type="text"
+          value={name}
+        />
+      </label>
+      {resolved.name !== null && (
+        <p className="create-directory__hint" role="status">
+          Будет создан каталог: {parent === '' ? '' : `${parent}/`}
+          {resolved.name}
+        </p>
+      )}
+      {shownError !== null && (
+        <p className="create-directory__error" role="alert">
+          {shownError}
+        </p>
+      )}
+      <div className="create-directory__actions">
         <button disabled={!canSubmit} type="submit">
           {creating ? 'Создаём…' : 'Создать'}
         </button>

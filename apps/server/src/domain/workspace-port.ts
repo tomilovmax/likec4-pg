@@ -1,4 +1,5 @@
 import type {
+  CreateDirectoryResponse,
   DiagramResponse,
   FileContentResponse,
   FilesResponse,
@@ -17,6 +18,8 @@ export interface WorkspacePort {
   ): Promise<FileContentResponse>
   // REQ-08: неперезаписывающее создание нового .c4 файла в существующем каталоге.
   createFile(parent: string, name: string): Promise<FileContentResponse>
+  // REQ-09: создание одного нового каталога в существующем parent directory.
+  createDirectory(parent: string, name: string): Promise<CreateDirectoryResponse>
   getProject(): Promise<ProjectResponse>
   getDiagram(): Promise<DiagramResponse>
 }

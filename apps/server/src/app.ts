@@ -1,7 +1,11 @@
 import fastifyStatic from '@fastify/static'
 import Fastify, { type FastifyError, type FastifyInstance } from 'fastify'
 
-import { createFileRequestSchema, saveFileRequestSchema } from '@likec4-web-ide/contracts'
+import {
+  createDirectoryRequestSchema,
+  createFileRequestSchema,
+  saveFileRequestSchema,
+} from '@likec4-web-ide/contracts'
 
 import type { WorkspacePort } from './domain/workspace-port.js'
 import { ApiError } from './http/api-error.js'
@@ -73,6 +77,26 @@ export async function buildApp(
     }
     const created = await workspace.createFile(parsed.data.parent, parsed.data.name)
     reply.header('etag', `"${created.version}"`)
+    reply.header('cache-control', 'no-store')
+    reply.status(201)
+    return created
+  })
+  // REQ-09: создание одного каталога. Parent и имя идут телом JSON — тот же
+  // принцип, что у REQ-08; guard REQ-03 внутри createDirectory. Успех — 201
+  // с entry каталога; etag нет — у каталога нет содержимого и version token.
+  app.post('/api/directories', async (request, reply) => {
+    const parsed = createDirectoryRequestSchema.safeParse(request.body)
+    if (!parsed.success) {
+      throw new ApiError(
+        400,
+        'VALIDATION_ERROR',
+        'Invalid create directory request body',
+      )
+    }
+    const created = await workspace.createDirectory(
+      parsed.data.parent,
+      parsed.data.name,
+    )
     reply.header('cache-control', 'no-store')
     reply.status(201)
     return created

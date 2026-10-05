@@ -16,15 +16,26 @@ import { isWithin, type WorkspacePathResolver } from './workspace-paths.js'
  *
  * Дерево содержит только разрешённые файлы (`allowed-files.ts`) и каталоги,
  * ведущие к ним; скрытые записи и ветки без LikeC4-файлов вырезаются.
- * Недоступный для чтения подкаталог пропускается — он не ломает всё дерево.
- * Порядок детерминирован: внутри каталога сначала подкаталоги, затем файлы,
- * каждый список — по имени; за каталогом сразу идёт его содержимое.
+ * Исключение (REQ-09): физически пустой каталог виден как directory-entry
+ * без детей — иначе созданный каталог не появился бы в дереве; каталог, где
+ * после скрытых и нерелевантных записей не осталось разрешённых файлов,
+ * по-прежнему вырезается. Недоступный для чтения подкаталог пропускается —
+ * он не ломает всё дерево. Порядок детерминирован: внутри каталога сначала
+ * подкаталоги, затем файлы, каждый список — по имени; за каталогом сразу
+ * идёт его содержимое.
  */
 export async function listWorkspaceFiles(
   resolver: WorkspacePathResolver,
 ): Promise<FileEntry[]> {
   const root = await resolver.trustedRoot()
-  return walkDirectory(root, '', root, new Set([root]))
+  return (await walkDirectory(root, '', root, new Set([root]))).entries
+}
+
+/** Записи каталога и признак «ни одной видимой записи вообще». */
+interface WalkResult {
+  entries: FileEntry[]
+  /** true — в каталоге не осталось записей после скрытых/нелегальных фильтров. */
+  empty: boolean
 }
 
 async function walkDirectory(
@@ -32,11 +43,12 @@ async function walkDirectory(
   relativeDirectory: string,
   root: string,
   visitedDirectories: Set<string>,
-): Promise<FileEntry[]> {
+): Promise<WalkResult> {
   const dirents = await readdir(directoryPath, { withFileTypes: true })
 
   const directoryEntries: { entry: FileEntry; children: FileEntry[] }[] = []
   const fileEntries: FileEntry[] = []
+  let sawEntries = false
 
   for (const dirent of dirents) {
     if (isHiddenEntry(dirent.name)) {
@@ -60,6 +72,7 @@ async function walkDirectory(
     if (!isWithin(root, realPath)) {
       continue
     }
+    sawEntries = true
 
     const stats = await stat(realPath).catch(() => null)
     if (stats?.isDirectory()) {
@@ -68,17 +81,18 @@ async function walkDirectory(
       }
       visitedDirectories.add(realPath)
 
-      // Недоступный подкаталог пропускаем — он не ломает всё дерево.
+      // Недоступный подкаталог пропускаем — он не ломает всё дерево и не
+      // выглядит пустым (REQ-09).
       const children = await walkDirectory(
         realPath,
         relativePath,
         root,
         visitedDirectories,
-      ).catch(() => [])
-      if (children.length > 0) {
+      ).catch(() => null)
+      if (children !== null && (children.entries.length > 0 || children.empty)) {
         directoryEntries.push({
           entry: { path: relativePath, name: dirent.name, kind: 'directory' },
-          children,
+          children: children.entries,
         })
       }
     } else if (stats?.isFile()) {
@@ -96,8 +110,11 @@ async function walkDirectory(
 
   const byName = (a: FileEntry, b: FileEntry) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0)
   const sortedDirectories = [...directoryEntries].sort((a, b) => byName(a.entry, b.entry))
-  return [
-    ...sortedDirectories.flatMap(({ entry, children }) => [entry, ...children]),
-    ...[...fileEntries].sort(byName),
-  ]
+  return {
+    entries: [
+      ...sortedDirectories.flatMap(({ entry, children }) => [entry, ...children]),
+      ...[...fileEntries].sort(byName),
+    ],
+    empty: !sawEntries,
+  }
 }

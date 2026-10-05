@@ -759,10 +759,234 @@ describe('REQ-08 API', () => {
         expect(response.statusCode).toBe(400)
         expect(response.json().error.code).toBe('INVALID_PATH')
       }
-      // Ни один отклонённый файл не появился на диске: дерево пустое (пустой
-      // каталог model вырезается правилом REQ-04, новых файлов нет).
+      // Ни один отклонённый файл не появился на диске: новых файлов нет, а
+      // пустой каталог model фикстуры виден как directory-entry (REQ-09).
       const tree = await app.inject({ method: 'GET', url: '/api/files' })
-      expect(tree.json().items).toEqual([])
+      expect(tree.json().items).toEqual([
+        { path: 'model', name: 'model', kind: 'directory' },
+      ])
+    } finally {
+      await app.close()
+    }
+  })
+})
+
+describe('REQ-09 API', () => {
+  async function buildAppWithDirectories() {
+    const { app, workspaceRoot } = await buildConfiguredApp()
+    await mkdir(path.join(workspaceRoot, 'model'))
+    return { app, workspaceRoot }
+  }
+
+  it('creates a single directory in the root and in a nested parent', async () => {
+    const { app, workspaceRoot } = await buildAppWithDirectories()
+
+    try {
+      const [rootCreate, nestedCreate, c4NamedCreate] = await Promise.all([
+        app.inject({
+          method: 'POST',
+          url: '/api/directories',
+          payload: { parent: '', name: 'notes' },
+        }),
+        app.inject({
+          method: 'POST',
+          url: '/api/directories',
+          payload: { parent: 'model', name: 'diagrams' },
+        }),
+        // Расширение .c4 в имени каталога допустимо: каталог не проходит
+        // файловый классификатор и показывается как kind: 'directory'.
+        app.inject({
+          method: 'POST',
+          url: '/api/directories',
+          payload: { parent: '', name: 'sources.c4' },
+        }),
+      ])
+
+      for (const response of [rootCreate, nestedCreate, c4NamedCreate]) {
+        expect(response.statusCode).toBe(201)
+        expect(response.headers['cache-control']).toBe('no-store')
+        // У каталога нет содержимого — etag не отдаётся.
+        expect(response.headers.etag).toBeUndefined()
+      }
+      expect(rootCreate.json()).toEqual({
+        path: 'notes',
+        name: 'notes',
+        kind: 'directory',
+      })
+      expect(nestedCreate.json()).toEqual({
+        path: 'model/diagrams',
+        name: 'diagrams',
+        kind: 'directory',
+      })
+      for (const relativePath of ['notes', 'model/diagrams', 'sources.c4']) {
+        expect((await stat(path.join(workspaceRoot, relativePath))).isDirectory()).toBe(true)
+      }
+      expect(JSON.stringify(rootCreate.json())).not.toContain(workspaceRoot)
+      expect(JSON.stringify(rootCreate.json())).not.toContain(tmpdir())
+
+      // Свежесозданные пустые каталоги появляются в дереве — критерий REQ-09.
+      const tree = await app.inject({ method: 'GET', url: '/api/files' })
+      expect(tree.json().items.map((item: { path: string }) => item.path)).toEqual(
+        expect.arrayContaining(['notes', 'model', 'model/diagrams', 'sources.c4']),
+      )
+    } finally {
+      await app.close()
+    }
+  })
+
+  it('gives 409 CONFLICT for an existing file or directory without overwriting', async () => {
+    const { app, workspaceRoot } = await buildAppWithDirectories()
+    await writeFile(path.join(workspaceRoot, 'existing.c4'), 'root\n', 'utf8')
+    await mkdir(path.join(workspaceRoot, 'occupied'))
+    await mkdir(path.join(workspaceRoot, 'model/occupied'))
+
+    try {
+      const [existingFile, existingDirectory, inDirectory] = await Promise.all([
+        app.inject({
+          method: 'POST',
+          url: '/api/directories',
+          payload: { parent: '', name: 'existing.c4' },
+        }),
+        app.inject({
+          method: 'POST',
+          url: '/api/directories',
+          payload: { parent: '', name: 'occupied' },
+        }),
+        app.inject({
+          method: 'POST',
+          url: '/api/directories',
+          payload: { parent: 'model', name: 'occupied' },
+        }),
+      ])
+
+      for (const response of [existingFile, existingDirectory, inDirectory]) {
+        expect(response.statusCode).toBe(409)
+        expect(response.json().error.code).toBe('CONFLICT')
+      }
+      // Существующие записи не тронуты.
+      await expect(readFile(path.join(workspaceRoot, 'existing.c4'), 'utf8')).resolves.toBe(
+        'root\n',
+      )
+      expect((await stat(path.join(workspaceRoot, 'occupied'))).isDirectory()).toBe(true)
+    } finally {
+      await app.close()
+    }
+  })
+
+  it('rejects missing parents, file parents and traversal parents', async () => {
+    const { app, workspaceRoot } = await buildAppWithDirectories()
+    await writeFile(path.join(workspaceRoot, 'model/spec.c4'), '', 'utf8')
+    const outsideDirectory = await mkdtemp(path.join(tmpdir(), 'outside-'))
+    createdDirectories.push(outsideDirectory)
+    await writeFile(path.join(outsideDirectory, 'secret.c4'), 'outside\n', 'utf8')
+    await symlink(outsideDirectory, path.join(workspaceRoot, 'linked'))
+    // Существующий symlink с именем создаваемого каталога, ведущий наружу.
+    await symlink(outsideDirectory, path.join(workspaceRoot, 'trap'))
+
+    try {
+      const [missing, fileParent, traversal, absolute, symlinkParent, symlinkTarget] =
+        await Promise.all([
+          app.inject({
+            method: 'POST',
+            url: '/api/directories',
+            payload: { parent: 'missing', name: 'notes' },
+          }),
+          app.inject({
+            method: 'POST',
+            url: '/api/directories',
+            payload: { parent: 'model/spec.c4', name: 'notes' },
+          }),
+          app.inject({
+            method: 'POST',
+            url: '/api/directories',
+            payload: { parent: '../outside', name: 'notes' },
+          }),
+          app.inject({
+            method: 'POST',
+            url: '/api/directories',
+            payload: { parent: '/etc', name: 'notes' },
+          }),
+          app.inject({
+            method: 'POST',
+            url: '/api/directories',
+            payload: { parent: 'linked', name: 'notes' },
+          }),
+          app.inject({
+            method: 'POST',
+            url: '/api/directories',
+            payload: { parent: '', name: 'trap' },
+          }),
+        ])
+
+      expect(missing.statusCode).toBe(404)
+      expect(missing.json().error.code).toBe('NOT_FOUND')
+      expect(fileParent.statusCode).toBe(400)
+      expect(fileParent.json().error.code).toBe('INVALID_PATH')
+      for (const response of [traversal, absolute, symlinkParent, symlinkTarget]) {
+        expect(response.statusCode).toBe(403)
+        expect(response.json().error.code).toBe('PATH_OUTSIDE_WORKSPACE')
+      }
+      // Ничего не создано ни внутри workspace, ни снаружи.
+      const tree = await app.inject({ method: 'GET', url: '/api/files' })
+      expect(tree.json().items.map((item: { path: string }) => item.path)).not.toContain('notes')
+      await expect(access(path.join(outsideDirectory, 'notes'))).rejects.toThrow()
+    } finally {
+      await app.close()
+    }
+  })
+
+  it('rejects path-like, hidden, long and empty names before any write', async () => {
+    const { app, workspaceRoot } = await buildAppWithDirectories()
+
+    try {
+      const [pathName, backslashName, hidden, dotOnly, empty, noBody, tooLong] =
+        await Promise.all([
+          app.inject({
+            method: 'POST',
+            url: '/api/directories',
+            payload: { parent: '', name: 'nested/notes' },
+          }),
+          app.inject({
+            method: 'POST',
+            url: '/api/directories',
+            payload: { parent: '', name: 'nested\\notes' },
+          }),
+          // Ведущая точка скрыла бы каталог из дерева — имя отклоняется.
+          app.inject({
+            method: 'POST',
+            url: '/api/directories',
+            payload: { parent: '', name: '.stash' },
+          }),
+          app.inject({
+            method: 'POST',
+            url: '/api/directories',
+            payload: { parent: '', name: '.' },
+          }),
+          app.inject({
+            method: 'POST',
+            url: '/api/directories',
+            payload: { parent: '', name: '   ' },
+          }),
+          app.inject({ method: 'POST', url: '/api/directories' }),
+          app.inject({
+            method: 'POST',
+            url: '/api/directories',
+            payload: { parent: '', name: 'n'.repeat(256) },
+          }),
+        ])
+
+      for (const response of [hidden, empty, noBody]) {
+        expect(response.statusCode).toBe(400)
+        expect(response.json().error.code).toBe('VALIDATION_ERROR')
+      }
+      for (const response of [pathName, backslashName, dotOnly, tooLong]) {
+        expect(response.statusCode).toBe(400)
+        expect(response.json().error.code).toBe('INVALID_PATH')
+      }
+      // Ни один отклонённый каталог не появился на диске.
+      for (const relativePath of ['nested', '.stash', 'n'.repeat(256)]) {
+        await expect(access(path.join(workspaceRoot, relativePath))).rejects.toThrow()
+      }
     } finally {
       await app.close()
     }

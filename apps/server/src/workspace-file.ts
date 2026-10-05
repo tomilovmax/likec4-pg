@@ -1,8 +1,11 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
-import type { FileContentResponse } from '@likec4-web-ide/contracts'
+import type {
+  CreateDirectoryResponse,
+  FileContentResponse,
+} from '@likec4-web-ide/contracts'
 
 import { classifyWorkspaceFile } from './domain/allowed-files.js'
 import { ApiError } from './http/api-error.js'
@@ -101,6 +104,13 @@ export interface CreateWorkspaceFileInput {
   name: string
 }
 
+export interface CreateWorkspaceDirectoryInput {
+  /** Workspace-относительный путь существующего каталога; '' — корень workspace. */
+  parent: string
+  /** Базовое имя создаваемого каталога. */
+  name: string
+}
+
 /**
  * Создание нового .c4 файла (REQ-08). Имя — строго базовое имя с расширением
  * `.c4`: это подмножество классификатора REQ-04, поэтому созданный файл
@@ -121,20 +131,7 @@ export async function createWorkspaceFile(
   input: CreateWorkspaceFileInput,
 ): Promise<FileContentResponse> {
   const name = validateNewFileName(input.name)
-
-  let parentPath = ''
-  if (input.parent !== '') {
-    const parent = await resolver.resolveExisting(input.parent)
-    const stats = await stat(parent.absolutePath)
-    if (!stats.isDirectory()) {
-      throw new ApiError(
-        400,
-        'INVALID_PATH',
-        'Parent must be a directory inside the workspace.',
-      )
-    }
-    parentPath = parent.relativePath
-  }
+  const parentPath = await resolveParentDirectory(resolver, input.parent)
 
   const resolved = await resolver.resolveChild(
     parentPath === '' ? name : `${parentPath}/${name}`,
@@ -168,11 +165,108 @@ export async function createWorkspaceFile(
   }
 }
 
+/**
+ * Создание одного нового каталога (REQ-09). Имя — базовое имя записи без
+ * path-семантики и без ведущей точки: скрытый каталог невидим для фильтра
+ * дерева (REQ-04), поэтому его создание нарушало бы критерий «новый каталог
+ * появляется в дереве» — имя отклоняется до записи. Каталог назначения
+ * резолвится тем же `resolveParentDirectory`, цель — через `resolveChild`
+ * guard’а REQ-03 (realpath parent, а для занятого имени — и realpath цели),
+ * поэтому traversal, symlink наружу и отсутствующий parent отклоняются
+ * до записи.
+ *
+ * `mkdir` без recursion создаёт ровно один каталог в существующем parent —
+ * произвольный путь не создаётся; `EEXIST` отдаёт `409 CONFLICT` без
+ * единого изменения на диске, `ENOENT` (parent исчез между resolve и записью) —
+ * `404`. Ответ — entry каталога: содержимого и version token нет.
+ */
+export async function createWorkspaceDirectory(
+  resolver: WorkspacePathResolver,
+  input: CreateWorkspaceDirectoryInput,
+): Promise<CreateDirectoryResponse> {
+  const name = validateNewDirectoryName(input.name)
+  const parentPath = await resolveParentDirectory(resolver, input.parent)
+
+  const resolved = await resolver.resolveChild(
+    parentPath === '' ? name : `${parentPath}/${name}`,
+  )
+
+  try {
+    await mkdir(resolved.absolutePath, { recursive: false, mode: 0o755 })
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code
+    if (code === 'EEXIST') {
+      throw new ApiError(
+        409,
+        'CONFLICT',
+        `Entry "${name}" already exists in this directory.`,
+      )
+    }
+    if (code === 'ENOENT') {
+      // Parent исчез между resolve и записью — это не 500 и не перезапись.
+      throw new ApiError(404, 'NOT_FOUND', 'Parent directory not found in the workspace.')
+    }
+    throw error
+  }
+
+  return {
+    path: resolved.relativePath,
+    name: path.basename(resolved.relativePath),
+    kind: 'directory',
+  }
+}
+
+/**
+ * Каталог назначения новой записи (REQ-08/09): '' — доверенный корень,
+ * иначе путь проходит `resolveExisting` guard’а REQ-03 и обязан быть
+ * каталогом. Отсутствующий parent — 404 из resolver’а, файл — 400.
+ */
+async function resolveParentDirectory(
+  resolver: WorkspacePathResolver,
+  parent: string,
+): Promise<string> {
+  if (parent === '') {
+    return ''
+  }
+  const resolved = await resolver.resolveExisting(parent)
+  const stats = await stat(resolved.absolutePath)
+  if (!stats.isDirectory()) {
+    throw new ApiError(
+      400,
+      'INVALID_PATH',
+      'Parent must be a directory inside the workspace.',
+    )
+  }
+  return resolved.relativePath
+}
+
 /** Имя нового файла: одиночная запись с расширением .c4, без path-семантики. */
 function validateNewFileName(rawName: string): string {
+  const name = validateEntryName(rawName, 'File')
+  if (!name.endsWith('.c4')) {
+    throw new ApiError(400, 'VALIDATION_ERROR', 'Only new .c4 files can be created.')
+  }
+  return name
+}
+
+/** Имя нового каталога: одиночная запись без ведущей точки. */
+function validateNewDirectoryName(rawName: string): string {
+  const name = validateEntryName(rawName, 'Directory')
+  if (name.startsWith('.')) {
+    throw new ApiError(
+      400,
+      'VALIDATION_ERROR',
+      'Directory name cannot start with a dot — hidden entries are not shown in the tree.',
+    )
+  }
+  return name
+}
+
+/** Общее правило REQ-08/09: имя записи — не путь и не пустая строка. */
+function validateEntryName(rawName: string, kind: 'File' | 'Directory'): string {
   const name = rawName.trim()
   if (name === '') {
-    throw new ApiError(400, 'VALIDATION_ERROR', 'File name is required.')
+    throw new ApiError(400, 'VALIDATION_ERROR', `${kind} name is required.`)
   }
   if (
     name.includes('/') ||
@@ -184,14 +278,11 @@ function validateNewFileName(rawName: string): string {
     throw new ApiError(
       400,
       'INVALID_PATH',
-      'File name must be a single entry name, not a path.',
+      `${kind} name must be a single entry name, not a path.`,
     )
   }
   if (Buffer.byteLength(name, 'utf8') > 255) {
-    throw new ApiError(400, 'INVALID_PATH', 'File name is too long.')
-  }
-  if (!name.endsWith('.c4')) {
-    throw new ApiError(400, 'VALIDATION_ERROR', 'Only new .c4 files can be created.')
+    throw new ApiError(400, 'INVALID_PATH', `${kind} name is too long.`)
   }
   return name
 }

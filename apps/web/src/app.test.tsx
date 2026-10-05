@@ -1131,6 +1131,209 @@ describe('REQ-08 create file', () => {
   })
 })
 
+describe('REQ-09 create directory', () => {
+  interface CreateDirectoryCall {
+    body: { parent: string; name: string }
+  }
+
+  const createdDirectoryEntry = {
+    path: 'model/notes',
+    name: 'notes',
+    kind: 'directory',
+  }
+
+  /** POST /api/directories управляется хендлером; успех расширяет дерево. */
+  function stubApiWithCreateDirectory(
+    createHandler: (call: CreateDirectoryCall) => Promise<Response>,
+  ) {
+    const createCalls: CreateDirectoryCall[] = []
+    let directoryCreated = false
+    const fetchMock = vi.fn((path: string, init?: RequestInit): Promise<Response> => {
+      if (path === '/api/directories' && init?.method === 'POST') {
+        const call: CreateDirectoryCall = {
+          body: JSON.parse(String(init.body)) as { parent: string; name: string },
+        }
+        createCalls.push(call)
+        return createHandler(call).then((response) => {
+          if (response.ok) {
+            directoryCreated = true
+          }
+          return response
+        })
+      }
+      if (path === '/api/files') {
+        return Promise.resolve(
+          jsonResponse({
+            items: directoryCreated
+              ? [...nestedFilesResponse.items, createdDirectoryEntry]
+              : nestedFilesResponse.items,
+          }),
+        )
+      }
+      if (path === '/api/workspace') {
+        return Promise.resolve(
+          jsonResponse({ status: 'ready', displayName: 'architecture' }),
+        )
+      }
+      if (path === '/api/diagram') {
+        return Promise.resolve(jsonResponse({ status: 'empty', reason: 'NO_VIEWS' }))
+      }
+      return Promise.reject(new Error(`unexpected fetch: ${path}`))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    return { createCalls, fetchMock }
+  }
+
+  async function fillCreateDirectoryForm(
+    files: HTMLElement,
+    options: { parent?: string; name: string },
+  ) {
+    // Каталоги формы строятся из дерева: ждём его загрузки до выбора parent.
+    await waitFor(() => {
+      expect(within(files).getByText('specification.c4')).toBeTruthy()
+    })
+    fireEvent.click(within(files).getByRole('button', { name: '+ Новый каталог' }))
+    if (options.parent !== undefined) {
+      fireEvent.change(within(files).getByLabelText('Каталог'), {
+        target: { value: options.parent },
+      })
+    }
+    fireEvent.change(within(files).getByLabelText('Имя каталога'), {
+      target: { value: options.name },
+    })
+  }
+
+  it('creates the directory in the chosen parent and refreshes the tree without opening the editor', async () => {
+    const { createCalls, fetchMock } = stubApiWithCreateDirectory(() =>
+      Promise.resolve(
+        jsonResponse({ path: 'model/notes', name: 'notes', kind: 'directory' }),
+      ),
+    )
+
+    render(<App />)
+
+    const files = screen.getByRole('region', { name: 'Files' })
+    const editor = screen.getByRole('region', { name: 'Code Editor' })
+
+    await fillCreateDirectoryForm(files, { parent: 'model', name: 'notes' })
+    // Подсказка до запроса: путь — workspace-относительный.
+    expect(within(files).getByRole('status').textContent).toContain(
+      'Будет создан каталог: model/notes',
+    )
+
+    fireEvent.click(within(files).getByRole('button', { name: 'Создать' }))
+
+    // Дерево перечитано из server state и содержит новый каталог.
+    await waitFor(() => {
+      expect(within(files).getByText('notes')).toBeTruthy()
+    })
+    expect(within(files).queryByLabelText('Имя каталога')).toBeNull()
+
+    // Каталог не открывается в редакторе — открывать нечего.
+    expect(editor.querySelector('.opened-file')).toBeNull()
+
+    expect(createCalls).toEqual([{ body: { parent: 'model', name: 'notes' } }])
+    const listRequests = fetchMock.mock.calls.filter(
+      ([path, init]) => path === '/api/files' && init?.method !== 'POST',
+    )
+    expect(listRequests.length).toBeGreaterThanOrEqual(2)
+  })
+
+  it('shows the conflict and keeps the tree unchanged when the name is taken', async () => {
+    const { fetchMock } = stubApiWithCreateDirectory(() =>
+      Promise.resolve(
+        jsonResponse(
+          {
+            error: {
+              code: 'CONFLICT',
+              message: 'Entry "notes" already exists in this directory.',
+            },
+          },
+          409,
+        ),
+      ),
+    )
+
+    render(<App />)
+
+    const files = screen.getByRole('region', { name: 'Files' })
+    await fillCreateDirectoryForm(files, { name: 'notes' })
+    fireEvent.click(within(files).getByRole('button', { name: 'Создать' }))
+
+    await waitFor(() => {
+      expect(within(files).getByRole('alert').textContent).toContain('уже существует')
+    })
+    // Ложного entry нет: дерево не перечитано, каталога в нём не появилось.
+    expect(within(files).queryByText('notes')).toBeNull()
+    expect(
+      fetchMock.mock.calls.filter(([path, init]) => path === '/api/files' && init?.method !== 'POST'),
+    ).toHaveLength(1)
+    // Форма остаётся доступной для исправления имени.
+    expect(within(files).getByLabelText('Имя каталога')).toBeTruthy()
+  })
+
+  it('validates the name before any request', async () => {
+    const { createCalls } = stubApiWithCreateDirectory(() =>
+      Promise.resolve(jsonResponse({})),
+    )
+
+    render(<App />)
+
+    const files = screen.getByRole('region', { name: 'Files' })
+    fireEvent.click(within(files).getByRole('button', { name: '+ Новый каталог' }))
+
+    // Пустое имя: submit недоступен.
+    expect(within(files).getByRole('button', { name: 'Создать' })).toHaveProperty('disabled', true)
+
+    // Path-подобное имя отклоняется инлайн без API-запроса.
+    fireEvent.change(within(files).getByLabelText('Имя каталога'), {
+      target: { value: 'nested/notes' },
+    })
+    await waitFor(() => {
+      expect(within(files).getByRole('alert').textContent).toContain('Имя не может содержать')
+    })
+    expect(within(files).getByRole('button', { name: 'Создать' })).toHaveProperty('disabled', true)
+
+    // Ведущая точка скрыла бы каталог из дерева — отклоняется до запроса.
+    fireEvent.change(within(files).getByLabelText('Имя каталога'), {
+      target: { value: '.secret' },
+    })
+    await waitFor(() => {
+      expect(within(files).getByRole('alert').textContent).toContain('скрыта из дерева')
+    })
+
+    expect(createCalls).toEqual([])
+  })
+
+  it('keeps the form error visible when the API rejects the parent', async () => {
+    stubApiWithCreateDirectory(() =>
+      Promise.resolve(
+        jsonResponse(
+          { error: { code: 'NOT_FOUND', message: 'Entry not found in the workspace.' } },
+          404,
+        ),
+      ),
+    )
+
+    render(<App />)
+
+    const files = screen.getByRole('region', { name: 'Files' })
+    await fillCreateDirectoryForm(files, { parent: 'model', name: 'notes' })
+    fireEvent.click(within(files).getByRole('button', { name: 'Создать' }))
+
+    await waitFor(() => {
+      expect(within(files).getByRole('alert').textContent).toContain(
+        'Entry not found in the workspace.',
+      )
+    })
+    // Дерево не тронуто, редактор остался без открытого файла.
+    expect(within(files).queryByText('notes')).toBeNull()
+    expect(
+      screen.getByRole('region', { name: 'Code Editor' }).querySelector('.opened-file'),
+    ).toBeNull()
+  })
+})
+
 describe('REQ-16 view selector', () => {
   const modelViews = { index: {}, overview: {}, 'dev-extra': {} }
 
