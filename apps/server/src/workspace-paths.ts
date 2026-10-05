@@ -56,9 +56,11 @@ export class WorkspacePathResolver {
     // тогда её фактическая цель тоже обязана быть внутри workspace.
     await this.realpathIfExistsWithinRoot(candidate, userPath)
 
+    const relativeParent = toRelative(await this.trustedRoot(), realParent)
     return {
       absolutePath: path.join(realParent, name),
-      relativePath: `${toRelative(await this.trustedRoot(), realParent)}/${name}`,
+      // Для корня toRelative даёт '', и слэш не подставляется.
+      relativePath: relativeParent === '' ? name : `${relativeParent}/${name}`,
     }
   }
 

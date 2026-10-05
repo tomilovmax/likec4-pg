@@ -10,7 +10,11 @@ import type {
 
 import type { WorkspacePort } from '../domain/workspace-port.js'
 import { WorkspacePathResolver } from '../workspace-paths.js'
-import { readWorkspaceFile, saveWorkspaceFile } from '../workspace-file.js'
+import {
+  createWorkspaceFile,
+  readWorkspaceFile,
+  saveWorkspaceFile,
+} from '../workspace-file.js'
 import { listWorkspaceFiles } from '../workspace-tree.js'
 import { loadWorkspaceDiagram } from '../workspace-diagram.js'
 import { loadWorkspaceProject } from '../workspace-project.js'
@@ -60,6 +64,12 @@ export class LocalWorkspaceProvider implements WorkspacePort {
     version: string,
   ): Promise<FileContentResponse> {
     return saveWorkspaceFile(this.paths, userPath, { content, version })
+  }
+
+  // REQ-08: неперезаписывающее создание .c4 файла; тот же path guard REQ-03,
+  // что и у остальных файловых операций.
+  async createFile(parent: string, name: string): Promise<FileContentResponse> {
+    return createWorkspaceFile(this.paths, { parent, name })
   }
 
   // REQ-14: полная multi-file модель из доверенного realpath-корня REQ-03;

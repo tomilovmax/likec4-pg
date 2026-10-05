@@ -1,7 +1,7 @@
 import fastifyStatic from '@fastify/static'
-import Fastify, { type FastifyInstance } from 'fastify'
+import Fastify, { type FastifyError, type FastifyInstance } from 'fastify'
 
-import { saveFileRequestSchema } from '@likec4-web-ide/contracts'
+import { createFileRequestSchema, saveFileRequestSchema } from '@likec4-web-ide/contracts'
 
 import type { WorkspacePort } from './domain/workspace-port.js'
 import { ApiError } from './http/api-error.js'
@@ -17,7 +17,7 @@ export async function buildApp(
   const app = Fastify({ logger: false })
   const workspace = options.workspace
 
-  app.setErrorHandler((error, _request, reply) => {
+  app.setErrorHandler((error: FastifyError, _request, reply) => {
     if (error instanceof ApiError) {
       return reply.status(error.statusCode).send({
         error: {
@@ -59,6 +59,24 @@ export async function buildApp(
   app.get('/api/health', async () => ({ ok: true }))
   app.get('/api/workspace', () => workspace.getWorkspace())
   app.get('/api/files', () => workspace.listFiles())
+  // REQ-08: создание нового .c4 файла. Parent и имя идут телом JSON — путь
+  // не проходит через URL-декодирование router’а, а резолвится общим guard’ом
+  // REQ-03 внутри createFile. Успех — 201 с FileContentResponse пустого файла.
+  app.post('/api/files', async (request, reply) => {
+    const parsed = createFileRequestSchema.safeParse(request.body)
+    if (!parsed.success) {
+      throw new ApiError(
+        400,
+        'VALIDATION_ERROR',
+        'Invalid create file request body',
+      )
+    }
+    const created = await workspace.createFile(parsed.data.parent, parsed.data.name)
+    reply.header('etag', `"${created.version}"`)
+    reply.header('cache-control', 'no-store')
+    reply.status(201)
+    return created
+  })
   // REQ-05: чтение файла по workspace-относительному пути. Wildcard-параметр
   // приходит от Fastify уже URL-decoded и уходит в общий path guard REQ-03.
   app.get<{ Params: { '*': string } }>('/api/files/*', async (request, reply) => {
