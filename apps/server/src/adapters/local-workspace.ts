@@ -10,7 +10,7 @@ import type {
 
 import type { WorkspacePort } from '../domain/workspace-port.js'
 import { WorkspacePathResolver } from '../workspace-paths.js'
-import { readWorkspaceFile } from '../workspace-file.js'
+import { readWorkspaceFile, saveWorkspaceFile } from '../workspace-file.js'
 import { listWorkspaceFiles } from '../workspace-tree.js'
 import { loadWorkspaceDiagram } from '../workspace-diagram.js'
 import { loadWorkspaceProject } from '../workspace-project.js'
@@ -50,6 +50,16 @@ export class LocalWorkspaceProvider implements WorkspacePort {
   // REQ-05: буквальный UTF-8 текст разрешённого файла и version token.
   async readFile(userPath: string): Promise<FileContentResponse> {
     return readWorkspaceFile(this.paths, userPath)
+  }
+
+  // REQ-07: атомарное сохранение literal buffer с optimistic проверкой version
+  // token; тот же path guard REQ-03 и классификатор REQ-04, что и у чтения.
+  async saveFile(
+    userPath: string,
+    content: string,
+    version: string,
+  ): Promise<FileContentResponse> {
+    return saveWorkspaceFile(this.paths, userPath, { content, version })
   }
 
   // REQ-14: полная multi-file модель из доверенного realpath-корня REQ-03;

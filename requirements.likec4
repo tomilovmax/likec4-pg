@@ -167,7 +167,7 @@ model {
     -> req_language_features 'Редактор получает language integration'
   }
 
-  req_save_file = requirement_open {
+  req_save_file = requirement_met {
     title 'REQ-07 · Атомарное сохранение с защитой от конфликта'
     summary 'Пользователь сохраняет literal text buffer в исходный файл и не перезаписывает чужую новую версию молча.'
     description '''
@@ -176,12 +176,12 @@ model {
       версию. Запись никогда не строится через сериализацию LikeC4 model.
 
       Критерии приёмки:
-      - [ ] пользовательский Ctrl+S сохраняет buffer активного файла
-      - [ ] форматирование и комментарии записываются буквально
-      - [ ] при ошибке записи старое содержимое файла остаётся целым
-      - [ ] устаревший version token даёт явно обрабатываемый conflict, не last-write-wins
-      - [ ] успешный save обновляет version token и снимает dirty state
-      - [ ] tests подтверждают atomic failure и conflict сценарии
+      - [x] пользовательский Ctrl+S сохраняет buffer активного файла
+      - [x] форматирование и комментарии записываются буквально
+      - [x] при ошибке записи старое содержимое файла остаётся целым
+      - [x] устаревший version token даёт явно обрабатываемый conflict, не last-write-wins
+      - [x] успешный save обновляет version token и снимает dirty state
+      - [x] tests подтверждают atomic failure и conflict сценарии
     '''
     -> req_unsaved_changes 'Save UX показывает результат'
     -> req_refresh_project 'Успешное сохранение обновляет модель'
@@ -330,7 +330,7 @@ model {
     -> req_invalid_dsl 'Preview сообщает о повреждённой модели'
   }
 
-  req_view_selector = requirement_open {
+  req_view_selector = requirement_met {
     title 'REQ-16 · Выбор диаграммы из списка views'
     summary 'Пользователь выбирает любую доступную LikeC4 view, а preview показывает именно её.'
     description '''
@@ -338,11 +338,11 @@ model {
       названия и синхронизирует выбранную view с Diagram panel.
 
       Критерии приёмки:
-      - [ ] UI показывает все views, найденные в model, без захардкоженного имени файла
-      - [ ] выбор другой view обновляет diagram preview
-      - [ ] после refresh сохраняется selection существующей view
-      - [ ] при исчезновении выбранной view применяется понятный безопасный fallback
-      - [ ] integration test переключает минимум две view
+      - [x] UI показывает все views, найденные в model, без захардкоженного имени файла
+      - [x] выбор другой view обновляет diagram preview
+      - [x] после refresh сохраняется selection существующей view
+      - [x] при исчезновении выбранной view применяется понятный безопасный fallback
+      - [x] integration test переключает минимум две view
     '''
   }
 

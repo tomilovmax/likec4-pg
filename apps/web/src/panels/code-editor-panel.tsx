@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 
 import type { FileContentResponse, FileEntry } from '@likec4-web-ide/contracts'
 
-import { api } from '../api/client'
+import { api, ApiClientError } from '../api/client'
 import { loadWorkspaceSources, type SourceLoadFailure } from '../api/workspace-sources'
 import { Panel } from '../components/panel'
 import { ResourceError } from '../components/resource-error'
@@ -21,10 +21,23 @@ interface CodeEditorPanelProps {
   onDirtyChange: (path: string, dirty: boolean) => void
 }
 
+type SaveState =
+  | { status: 'idle' }
+  | { status: 'saving' }
+  | { status: 'conflict'; message: string }
+  | { status: 'error'; message: string }
+
 type OpenFileRecord =
   | { status: 'loading' }
   | { status: 'error'; message: string }
-  | { status: 'ready'; content: FileContentResponse; dirty: boolean }
+  | {
+      status: 'ready'
+      content: FileContentResponse
+      /** REQ-07: редактируемый buffer поверх сохранённого текста. */
+      buffer: string
+      save: SaveState
+      dirty: boolean
+    }
 
 type SourceLoadState =
   | { status: 'loading' }
@@ -116,7 +129,16 @@ export function CodeEditorPanel({ selectedFile, onDirtyChange }: CodeEditorPanel
     void api.readFile(path).then(
       (content) => {
         if (isCurrent) {
-          setOpenFiles((current) => ({ ...current, [path]: { content, dirty: false, status: 'ready' } }))
+          setOpenFiles((current) => ({
+            ...current,
+            [path]: {
+              content,
+              buffer: content.content,
+              dirty: false,
+              save: { status: 'idle' },
+              status: 'ready',
+            }
+          }))
         }
       },
       (error: unknown) => {
@@ -151,10 +173,10 @@ export function CodeEditorPanel({ selectedFile, onDirtyChange }: CodeEditorPanel
         if (existing.content.language === 'likec4') {
           likeC4LanguageRuntime.updateSource(path, value)
         }
-        if (dirty === existing.dirty) {
+        if (dirty === existing.dirty && value === existing.buffer) {
           return current
         }
-        return { ...current, [path]: { ...existing, dirty } }
+        return { ...current, [path]: { ...existing, buffer: value, dirty } }
       })
     },
     [path],
@@ -167,6 +189,100 @@ export function CodeEditorPanel({ selectedFile, onDirtyChange }: CodeEditorPanel
       onDirtyChange(path, isDirty)
     }
   }, [isDirty, isReady, onDirtyChange, path])
+
+  /**
+   * REQ-07: сохранение literal buffer активного файла с optimistic проверкой
+   * версии. Отправляется buffer на момент вызова; если он изменился во время
+   * запроса, сохранённая база обновляется, но buffer и dirty сохраняются.
+   */
+  const saveActiveFile = useCallback(() => {
+    if (path === null) {
+      return
+    }
+    const currentRecord = openFiles[path]
+    if (currentRecord?.status !== 'ready') {
+      return
+    }
+    const { content, buffer, dirty } = currentRecord
+    if (currentRecord.save.status === 'saving') {
+      return
+    }
+    if (!dirty && buffer === content.content) {
+      return
+    }
+
+    setOpenFiles((current) => {
+      const record = current[path]
+      if (record?.status !== 'ready') {
+        return current
+      }
+      return { ...current, [path]: { ...record, save: { status: 'saving' } } }
+    })
+
+    void api
+      .saveFile(content.path, { content: buffer, version: content.version })
+      .then(
+        (saved) => {
+          setOpenFiles((current) => {
+            const record = current[path]
+            if (record?.status !== 'ready') {
+              return current
+            }
+            // Race guard: buffer могли изменить во время запроса. База
+            // (сохранённый текст и version) обновляется, dirty пересчитывается
+            // от нового buffer.
+            const dirtyNow = record.buffer !== saved.content
+            return {
+              ...current,
+              [path]: {
+                ...record,
+                content: { ...saved, content: saved.content },
+                dirty: dirtyNow,
+                save: { status: 'idle' },
+              },
+            }
+          })
+        },
+        (error: unknown) => {
+          setOpenFiles((current) => {
+            const record = current[path]
+            if (record?.status !== 'ready') {
+              return current
+            }
+            const isConflict =
+              error instanceof ApiClientError && error.details.error.code === 'CONFLICT'
+            const message = isConflict
+              ? 'Файл изменён вне IDE. Перезагрузите страницу, чтобы увидеть актуальную версию, и повторите сохранение.'
+              : error instanceof Error
+                ? error.message
+                : 'Не удалось сохранить файл'
+            return {
+              ...current,
+              [path]: {
+                ...record,
+                // Buffer и dirty state не сбрасываются: неудачный save не
+                // теряет пользовательский ввод.
+                save: { status: isConflict ? 'conflict' : 'error', message },
+              },
+            }
+          })
+        },
+      )
+  }, [openFiles, path])
+
+  useEffect(() => {
+    if (path === null) {
+      return
+    }
+    const handler = (event: KeyboardEvent) => {
+      if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === 's') {
+        event.preventDefault()
+        saveActiveFile()
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [path, saveActiveFile])
 
   return (
     <Panel title="Code Editor">
@@ -195,6 +311,7 @@ export function CodeEditorPanel({ selectedFile, onDirtyChange }: CodeEditorPanel
           content={record.content}
           diagnostics={diagnostics[record.content.path] ?? []}
           dirty={record.dirty}
+          save={record.save}
           onBufferChange={handleBufferChange}
         />
       )}
@@ -265,11 +382,13 @@ function OpenedFile({
   content,
   diagnostics,
   dirty,
+  save,
   onBufferChange,
 }: {
   content: FileContentResponse
   diagnostics: readonly import('../editor/likec4-language-runtime').LikeC4Diagnostic[]
   dirty: boolean
+  save: SaveState
   onBufferChange: (value: string) => void
 }) {
   return (
@@ -279,6 +398,16 @@ function OpenedFile({
         {dirty && (
           <span className="opened-file__dirty" role="status" title="Есть несохранённые изменения">
             {' ● не сохранён'}
+          </span>
+        )}
+        {save.status === 'saving' && (
+          <span className="opened-file__saving" role="status">
+            {' сохраняем…'}
+          </span>
+        )}
+        {(save.status === 'conflict' || save.status === 'error') && (
+          <span className="opened-file__save-error" role="alert">
+            {save.status === 'conflict' ? ' ⚠ конфликт записи' : ` ⚠ ${save.message}`}
           </span>
         )}
         <span className="opened-file__version" title={content.version}>

@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -213,5 +213,68 @@ describe('REQ-05 file content', () => {
       statusCode: 403,
       code: 'PATH_OUTSIDE_WORKSPACE',
     })
+  })
+})
+
+describe('REQ-07 file save', () => {
+  it('saves literal content, returns the new version and keeps the mode', async () => {
+    const workspaceRoot = await temporaryWorkspace()
+    const target = path.join(workspaceRoot, 'relations.likec4')
+    await writeFile(target, 'model {}\n', 'utf8', 0o600)
+
+    const provider = new LocalWorkspaceProvider(workspaceRoot)
+    const opened = await provider.readFile('relations.likec4')
+    const content = '// заметка\r\nmodel {\r\n  demo = "λ"\r\n}\r\n'
+
+    const saved = await provider.saveFile('relations.likec4', content, opened.version)
+
+    expect(saved.content).toBe(content)
+    expect(saved.path).toBe('relations.likec4')
+    expect(saved.version).toMatch(/^[0-9a-f]{64}$/)
+    expect(saved.version).not.toBe(opened.version)
+    // Побайтовая запись literal текста: CRLF, unicode и комментарии без изменений.
+    await expect(readFile(target, 'utf8')).resolves.toBe(content)
+    await expect(stat(target)).resolves.toMatchObject({ mode: expect.any(Number) })
+  })
+
+  it('rejects a stale version with CONFLICT and leaves the file intact', async () => {
+    const workspaceRoot = await temporaryWorkspace()
+    const target = path.join(workspaceRoot, 'relations.likec4')
+    await writeFile(target, 'model {}\n', 'utf8')
+
+    const provider = new LocalWorkspaceProvider(workspaceRoot)
+    const opened = await provider.readFile('relations.likec4')
+    await writeFile(target, 'external\n', 'utf8')
+
+    await expect(
+      provider.saveFile('relations.likec4', 'model { mine }\n', opened.version),
+    ).rejects.toMatchObject({ statusCode: 409, code: 'CONFLICT' })
+    await expect(readFile(target, 'utf8')).resolves.toBe('external\n')
+  })
+
+  it('rejects saving through a symlink outside the workspace', async () => {
+    const workspaceRoot = await temporaryWorkspace()
+    const externalFile = await fileOutsideWorkspace('secret.c4', 'secret')
+    await symlink(externalFile, path.join(workspaceRoot, 'escape.c4'))
+
+    const provider = new LocalWorkspaceProvider(workspaceRoot)
+    await expect(
+      provider.saveFile('escape.c4', 'model {}\n', 'a'.repeat(64)),
+    ).rejects.toMatchObject({ statusCode: 403, code: 'PATH_OUTSIDE_WORKSPACE' })
+    // Внешний файл не изменён.
+    await expect(readFile(externalFile, 'utf8')).resolves.toBe('secret')
+  })
+
+  it('refuses to save a disallowed or missing entry', async () => {
+    const workspaceRoot = await temporaryWorkspace()
+    await writeFile(path.join(workspaceRoot, 'README.md'), 'not likec4', 'utf8')
+
+    const provider = new LocalWorkspaceProvider(workspaceRoot)
+    await expect(
+      provider.saveFile('README.md', 'text', 'a'.repeat(64)),
+    ).rejects.toMatchObject({ statusCode: 415, code: 'UNSUPPORTED_FILE' })
+    await expect(
+      provider.saveFile('missing.c4', 'model {}\n', 'a'.repeat(64)),
+    ).rejects.toMatchObject({ statusCode: 404, code: 'NOT_FOUND' })
   })
 })

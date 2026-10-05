@@ -66,6 +66,8 @@ afterEach(() => {
   resetLanguageRuntimeForTest()
   likeC4RendererMock.failRenderer = false
   likeC4RendererMock.createdModels.length = 0
+  // REQ-16: selection view живёт в URL hash — изолируем тесты друг от друга.
+  window.history.replaceState(null, '', window.location.pathname)
 })
 
 describe('REQ-01 desktop shell', () => {
@@ -754,5 +756,341 @@ describe('REQ-15 diagram preview', () => {
     expect(
       vi.mocked(fetch).mock.calls.filter(([path]) => path === '/api/diagram'),
     ).toHaveLength(1)
+  })
+})
+
+describe('REQ-07 save buffer', () => {
+  const savedSpecification = 'specification {\n  demo = "λ"\n}'
+  const editedSpecification = 'specification {\n  demo = "edited"\n}'
+  const savedVersion = 'c'.repeat(64)
+  const newVersion = 'f'.repeat(64)
+
+  interface SaveCall {
+    path: string
+    body: { content: string; version: string }
+  }
+
+  function stubApiWithSave(saveHandler: (call: SaveCall) => Promise<Response>) {
+    const saveCalls: SaveCall[] = []
+    const fetchMock = vi.fn((path: string, init?: RequestInit): Promise<Response> => {
+      if (path === '/api/files') {
+        return Promise.resolve(jsonResponse(nestedFilesResponse))
+      }
+      if (path === '/api/workspace') {
+        return Promise.resolve(
+          jsonResponse({ status: 'ready', displayName: 'architecture' }),
+        )
+      }
+      if (path === '/api/diagram') {
+        return Promise.resolve(jsonResponse({ status: 'empty', reason: 'NO_VIEWS' }))
+      }
+      if (path === '/api/files/model/specification.c4' && init?.method !== 'PUT') {
+        return Promise.resolve(
+          jsonResponse({
+            path: 'model/specification.c4',
+            name: 'specification.c4',
+            language: 'likec4',
+            content: savedSpecification,
+            version: savedVersion,
+          }),
+        )
+      }
+      if (path === '/api/files/model/specification.c4' && init?.method === 'PUT') {
+        const call: SaveCall = {
+          path,
+          body: JSON.parse(String(init.body)) as { content: string; version: string },
+        }
+        saveCalls.push(call)
+        return saveHandler(call)
+      }
+      return Promise.reject(new Error(`unexpected fetch: ${path}`))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    return { fetchMock, saveCalls }
+  }
+
+  async function openAndEditSpecification() {
+    render(<App />)
+
+    const files = screen.getByRole('region', { name: 'Files' })
+    const editor = screen.getByRole('region', { name: 'Code Editor' })
+
+    const entry = await waitFor(() =>
+      within(files).getByRole('button', { name: /specification\.c4/ }),
+    )
+    fireEvent.click(entry)
+
+    const textarea = await waitFor(() => editorTextarea(editor))
+    fireEvent.change(textarea, { target: { value: editedSpecification } })
+    await waitFor(() => {
+      expect(within(editor).getByText(/не сохранён/)).toBeTruthy()
+    })
+    return { files, editor }
+  }
+
+  function pressSave() {
+    fireEvent.keyDown(window, { key: 's', ctrlKey: true })
+  }
+
+  it('saves the dirty buffer on Ctrl+S and clears the dirty state', async () => {
+    const { saveCalls } = stubApiWithSave(() =>
+      Promise.resolve(
+        jsonResponse({
+          path: 'model/specification.c4',
+          name: 'specification.c4',
+          language: 'likec4',
+          content: editedSpecification,
+          version: newVersion,
+        }),
+      ),
+    )
+
+    const { editor } = await openAndEditSpecification()
+    pressSave()
+
+    await waitFor(() => {
+      expect(within(editor).queryByText(/не сохранён/)).toBeNull()
+    })
+    expect(saveCalls).toEqual([
+      {
+        path: '/api/files/model/specification.c4',
+        body: { content: editedSpecification, version: savedVersion },
+      },
+    ])
+    // Показана новая сохранённая версия.
+    expect(within(editor).getByText(/версия f{12}/)).toBeTruthy()
+  })
+
+  it('keeps the buffer and dirty state when the save conflicts', async () => {
+    stubApiWithSave(() =>
+      Promise.resolve(
+        jsonResponse(
+          {
+            error: { code: 'CONFLICT', message: 'File "specification.c4" changed on disk since it was opened.' },
+          },
+          409,
+        ),
+      ),
+    )
+
+    const { editor } = await openAndEditSpecification()
+    pressSave()
+
+    await waitFor(() => {
+      expect(within(editor).getByRole('alert').textContent).toContain('конфликт записи')
+    })
+    // Buffer и dirty state не потеряны.
+    expect(readFakeModel('model/specification.c4')).toBe(editedSpecification)
+    expect(within(editor).getByText(/не сохранён/)).toBeTruthy()
+  })
+
+  it('keeps the buffer and shows an error when the save fails', async () => {
+    stubApiWithSave(() =>
+      Promise.resolve(
+        jsonResponse(
+          { error: { code: 'INTERNAL_ERROR', message: 'Save request failed' } },
+          500,
+        ),
+      ),
+    )
+
+    const { editor } = await openAndEditSpecification()
+    pressSave()
+
+    await waitFor(() => {
+      expect(within(editor).getByRole('alert').textContent).toContain('Save request failed')
+    })
+    expect(readFakeModel('model/specification.c4')).toBe(editedSpecification)
+    expect(within(editor).getByText(/не сохранён/)).toBeTruthy()
+  })
+})
+
+describe('REQ-16 view selector', () => {
+  const modelViews = { index: {}, overview: {}, 'dev-extra': {} }
+
+  function readyDiagramResponse(views: Array<{ id: string; title: string | null }>) {
+    return {
+      status: 'ready',
+      model: { _stage: 'layouted', projectId: 'fixture', views: modelViews },
+      views,
+      defaultViewId: views.find((view) => view.id === 'index')?.id ?? views[0]!.id,
+    }
+  }
+
+  const fullViews = [
+    { id: 'dev-extra', title: 'Dev and Extra' },
+    { id: 'index', title: 'Landscape view' },
+    { id: 'overview', title: 'Overview' },
+  ]
+
+  function stubApiWithDiagram(diagram: () => Promise<Response>) {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((path: string): Promise<Response> => {
+        if (path === '/api/files') {
+          return Promise.resolve(jsonResponse(nestedFilesResponse))
+        }
+        if (path === '/api/workspace') {
+          return Promise.resolve(
+            jsonResponse({ status: 'ready', displayName: 'architecture' }),
+          )
+        }
+        if (path === '/api/diagram') {
+          return diagram()
+        }
+        return Promise.reject(new Error(`unexpected fetch: ${path}`))
+      }),
+    )
+  }
+
+  /** Селектор views панели Diagram. */
+  function viewSelector(diagram: HTMLElement): HTMLSelectElement {
+    return within(diagram).getByLabelText('View') as HTMLSelectElement
+  }
+
+  it('lists every view found in the model with readable names', async () => {
+    stubApiWithDiagram(() =>
+      Promise.resolve(jsonResponse(readyDiagramResponse(fullViews))),
+    )
+
+    render(<App />)
+
+    const diagram = screen.getByRole('region', { name: 'Diagram' })
+    const select = await waitFor(() => viewSelector(diagram))
+
+    // Список строится из ответа модели, а не из имени файла или константы.
+    expect([...select.options].map((option) => option.textContent)).toEqual([
+      'Dev and Extra',
+      'Landscape view',
+      'Overview',
+    ])
+    // Без выбора пользователя показывается default сервера (правило REQ-15).
+    expect(select.value).toBe('index')
+    expect(
+      within(diagram).getByTestId('react-likec4').dataset.viewId,
+    ).toBe('index')
+  })
+
+  it('switches the preview between views without a new diagram request', async () => {
+    stubApiWithDiagram(() =>
+      Promise.resolve(jsonResponse(readyDiagramResponse(fullViews))),
+    )
+
+    render(<App />)
+
+    const diagram = screen.getByRole('region', { name: 'Diagram' })
+    await waitFor(() => viewSelector(diagram))
+
+    fireEvent.change(viewSelector(diagram), { target: { value: 'overview' } })
+    await waitFor(() => {
+      expect(within(diagram).getByTestId('react-likec4').dataset.viewId).toBe(
+        'overview',
+      )
+    })
+    expect(viewSelector(diagram).value).toBe('overview')
+    expect(window.location.hash).toBe('#view=overview')
+
+    // Вторая view — переключение минимум двух views за один загруженный model.
+    fireEvent.change(viewSelector(diagram), { target: { value: 'dev-extra' } })
+    await waitFor(() => {
+      expect(within(diagram).getByTestId('react-likec4').dataset.viewId).toBe(
+        'dev-extra',
+      )
+    })
+    expect(
+      vi.mocked(fetch).mock.calls.filter(([path]) => path === '/api/diagram'),
+    ).toHaveLength(1)
+  })
+
+  it('reflects internal preview navigation in the selector', async () => {
+    stubApiWithDiagram(() =>
+      Promise.resolve(jsonResponse(readyDiagramResponse(fullViews))),
+    )
+
+    render(<App />)
+
+    const diagram = screen.getByRole('region', { name: 'Diagram' })
+    await waitFor(() => within(diagram).getByTestId('react-likec4'))
+
+    fireEvent.click(within(diagram).getByRole('button', { name: 'navigate' }))
+
+    await waitFor(() => {
+      expect(viewSelector(diagram).value).toBe('dev-extra')
+    })
+    expect(window.location.hash).toBe('#view=dev-extra')
+  })
+
+  it('keeps the selection across a page refresh while the view exists', async () => {
+    stubApiWithDiagram(() =>
+      Promise.resolve(jsonResponse(readyDiagramResponse(fullViews))),
+    )
+
+    const first = render(<App />)
+    const diagram = screen.getByRole('region', { name: 'Diagram' })
+    await waitFor(() => viewSelector(diagram))
+    fireEvent.change(viewSelector(diagram), { target: { value: 'overview' } })
+    await waitFor(() => {
+      expect(within(diagram).getByTestId('react-likec4').dataset.viewId).toBe(
+        'overview',
+      )
+    })
+
+    // Page refresh: новое монтирование читает selection из URL hash.
+    first.unmount()
+    render(<App />)
+
+    const refreshedDiagram = screen.getByRole('region', { name: 'Diagram' })
+    const renderer = await waitFor(() =>
+      within(refreshedDiagram).getByTestId('react-likec4'),
+    )
+    expect(renderer.dataset.viewId).toBe('overview')
+    await waitFor(() => {
+      expect(viewSelector(refreshedDiagram).value).toBe('overview')
+    })
+  })
+
+  it('falls back to the default view with a notice when the selected view disappears', async () => {
+    let diagramRequests = 0
+    stubApiWithDiagram(() => {
+      diagramRequests += 1
+      // Refresh приносит модель без view overview.
+      return Promise.resolve(
+        jsonResponse(
+          diagramRequests === 1
+            ? readyDiagramResponse(fullViews)
+            : readyDiagramResponse(fullViews.filter((view) => view.id !== 'overview')),
+        ),
+      )
+    })
+
+    const first = render(<App />)
+    const diagram = screen.getByRole('region', { name: 'Diagram' })
+    await waitFor(() => viewSelector(diagram))
+    fireEvent.change(viewSelector(diagram), { target: { value: 'overview' } })
+    await waitFor(() => {
+      expect(window.location.hash).toBe('#view=overview')
+    })
+
+    first.unmount()
+    render(<App />)
+
+    const refreshedDiagram = screen.getByRole('region', { name: 'Diagram' })
+    const renderer = await waitFor(() =>
+      within(refreshedDiagram).getByTestId('react-likec4'),
+    )
+    // Безопасный fallback: серверский default вместо пустой панели.
+    expect(renderer.dataset.viewId).toBe('index')
+    expect(viewSelector(refreshedDiagram).value).toBe('index')
+    expect(
+      [...viewSelector(refreshedDiagram).options].map((option) => option.value),
+    ).toEqual(['dev-extra', 'index'])
+    await waitFor(() => {
+      expect(window.location.hash).toBe('#view=index')
+    })
+    await waitFor(() => {
+      const notice = within(refreshedDiagram).getByRole('status')
+      expect(notice.textContent).toContain('overview')
+      expect(notice.textContent).toContain('Landscape view')
+    })
   })
 })
