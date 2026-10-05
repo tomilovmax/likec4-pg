@@ -222,7 +222,7 @@ model {
     -> req_file_operations 'Создание каталога доступно из дерева'
   }
 
-  req_rename_entry = requirement_open {
+  req_rename_entry = requirement_met {
     title 'REQ-10 · Переименование файла или каталога'
     summary 'Пользователь переименовывает workspace entry без выхода за root и без неявного overwrite.'
     description '''
@@ -230,11 +230,11 @@ model {
       UI переименовывает выбранный файл либо каталог и синхронизирует tree и tabs.
 
       Критерии приёмки:
-      - [ ] source и destination проходят общий path resolver
-      - [ ] существующий destination отклоняется, если нет отдельного явного overwrite action
-      - [ ] переименование каталога переносит вложенное содержимое как filesystem rename
-      - [ ] tree и путь открытой вкладки обновляются после успеха
-      - [ ] filesystem error не приводит к partial overwrite или ложному UI success
+      - [x] source и destination проходят общий path resolver
+      - [x] существующий destination отклоняется, если нет отдельного явного overwrite action
+      - [x] переименование каталога переносит вложенное содержимое как filesystem rename
+      - [x] tree и путь открытой вкладки обновляются после успеха
+      - [x] filesystem error не приводит к partial overwrite или ложному UI success
     '''
     -> req_file_operations 'Переименование доступно из дерева'
     -> req_refresh_project 'Изменённый путь учитывается при пересборке модели'

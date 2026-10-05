@@ -59,6 +59,8 @@ export function MonacoEditor({
     if (container === null) {
       return
     }
+    // REQ-10: как настоящий runtime — seed новой модели актуальным buffer;
+    // эффект перезапускается только сменой файла/языка, не правками текста.
     const model = getOrCreateModel(path, initialValue)
 
     const textarea = document.createElement('textarea')
@@ -85,7 +87,7 @@ export function MonacoEditor({
       textarea.removeEventListener('change', syncFromTextarea)
       textarea.remove()
     }
-  }, [ariaLabel, initialValue, language, path])
+  }, [ariaLabel, language, path])
 
   return <div className="code-editor-host" ref={host} />
 }

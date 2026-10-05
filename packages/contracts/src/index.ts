@@ -109,6 +109,22 @@ export const createDirectoryResponseSchema = z.object({
 })
 export type CreateDirectoryResponse = z.infer<typeof createDirectoryResponseSchema>
 
+// REQ-10: переименование файла или каталога. client → POST /api/rename
+// { path, name }; `path` — workspace-относительный путь существующей записи,
+// `name` — новое базовое имя записи в том же каталоге (destination всегда
+// остаётся внутри parent’а source, поэтому операция — rename, а не move).
+// Существующий destination никогда не перезаписывается.
+export const renameEntryRequestSchema = z.object({
+  path: z.string(),
+  name: z.string(),
+})
+export type RenameEntryRequest = z.infer<typeof renameEntryRequestSchema>
+
+// Успешный ответ — entry с новым путём: kind и language — результат
+// классификации нового имени, старый путь клиенту не возвращается.
+export const renameEntryResponseSchema = fileEntrySchema
+export type RenameEntryResponse = FileEntry
+
 // REQ-14: полная multi-file модель проекта, загруженная официальным API LikeC4.
 // Ветка «ok» отдаётся только при пустом списке ошибок парсинга: половинную
 // модель клиент не получает (основа для REQ-15/18 — preview не выдаёт прежнюю

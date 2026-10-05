@@ -28,3 +28,22 @@ export function buildFileTree(items: FileEntry[]): FileTreeNode[] {
   }
   return roots
 }
+
+/**
+ * REQ-10: новый workspace-относительный путь после переименования записи
+ * `from` → `toPath` (переименование каталога перепривязывает и всё его
+ * содержимое). `null` — путь не затронут.
+ */
+export function remapRelativePath(
+  path: string,
+  from: string,
+  toPath: string,
+): string | null {
+  if (path === from) {
+    return toPath
+  }
+  if (path.startsWith(`${from}/`)) {
+    return `${toPath}/${path.slice(from.length + 1)}`
+  }
+  return null
+}

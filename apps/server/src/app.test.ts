@@ -993,6 +993,272 @@ describe('REQ-09 API', () => {
   })
 })
 
+describe('REQ-10 API', () => {
+  const literalContent =
+    '// комментарий переносится буквально\r\nmodel {\r\n  demo = "λ-α"\r\n}\r\n'
+
+  async function buildAppWithEntries() {
+    const { app, workspaceRoot } = await buildConfiguredApp()
+    await mkdir(path.join(workspaceRoot, 'model/nested'), { recursive: true })
+    await writeFile(path.join(workspaceRoot, 'model/spec.c4'), literalContent, 'utf8')
+    await writeFile(path.join(workspaceRoot, 'model/nested/extra.c4'), 'model {}\n', 'utf8')
+    await writeFile(path.join(workspaceRoot, 'notes.c4'), 'notes\n', 'utf8')
+    // Занятые имена destination в тех же каталогах, где лежат source.
+    await mkdir(path.join(workspaceRoot, 'model/occupied'))
+    await writeFile(path.join(workspaceRoot, 'model/taken.c4'), 'taken\n', 'utf8')
+    return { app, workspaceRoot }
+  }
+
+  it('renames a file in place keeping literal content and the tree path', async () => {
+    const { app, workspaceRoot } = await buildAppWithEntries()
+
+    try {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/rename',
+        payload: { path: 'model/spec.c4', name: 'architecture.c4' },
+      })
+
+      expect(response.statusCode).toBe(200)
+      expect(response.headers['cache-control']).toBe('no-store')
+      expect(response.json()).toEqual({
+        path: 'model/architecture.c4',
+        name: 'architecture.c4',
+        kind: 'file',
+        language: 'likec4',
+      })
+      expect(JSON.stringify(response.json())).not.toContain(workspaceRoot)
+      expect(JSON.stringify(response.json())).not.toContain(tmpdir())
+
+      // Содержимое перенесено как filesystem rename: буквально, без rewrite.
+      await expect(
+        readFile(path.join(workspaceRoot, 'model/architecture.c4'), 'utf8'),
+      ).resolves.toBe(literalContent)
+      await expect(access(path.join(workspaceRoot, 'model/spec.c4'))).rejects.toThrow()
+
+      const tree = await app.inject({ method: 'GET', url: '/api/files' })
+      const paths = tree.json().items.map((item: { path: string }) => item.path)
+      expect(paths).toContain('model/architecture.c4')
+      expect(paths).not.toContain('model/spec.c4')
+    } finally {
+      await app.close()
+    }
+  })
+
+  it('renames a directory with nested content as a single filesystem rename', async () => {
+    const { app, workspaceRoot } = await buildAppWithEntries()
+
+    try {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/rename',
+        payload: { path: 'model/nested', name: 'deep' },
+      })
+
+      expect(response.statusCode).toBe(200)
+      expect(response.json()).toEqual({
+        path: 'model/deep',
+        name: 'deep',
+        kind: 'directory',
+      })
+
+      // Вложенный файл переехал вместе с каталогом, содержимое цело.
+      await expect(
+        readFile(path.join(workspaceRoot, 'model/deep/extra.c4'), 'utf8'),
+      ).resolves.toBe('model {}\n')
+      await expect(access(path.join(workspaceRoot, 'model/nested'))).rejects.toThrow()
+
+      const tree = await app.inject({ method: 'GET', url: '/api/files' })
+      const paths = tree.json().items.map((item: { path: string }) => item.path)
+      expect(paths).toContain('model/deep/extra.c4')
+      expect(paths).not.toContain('model/nested/extra.c4')
+    } finally {
+      await app.close()
+    }
+  })
+
+  it('gives 409 CONFLICT for an existing or identical destination without overwriting', async () => {
+    const { app, workspaceRoot } = await buildAppWithEntries()
+
+    try {
+      const [existingFile, existingDirectory, sameName] = await Promise.all([
+        app.inject({
+          method: 'POST',
+          url: '/api/rename',
+          payload: { path: 'model/spec.c4', name: 'taken.c4' },
+        }),
+        app.inject({
+          method: 'POST',
+          url: '/api/rename',
+          payload: { path: 'model/nested', name: 'occupied' },
+        }),
+        app.inject({
+          method: 'POST',
+          url: '/api/rename',
+          payload: { path: 'notes.c4', name: 'notes.c4' },
+        }),
+      ])
+
+      for (const response of [existingFile, existingDirectory, sameName]) {
+        expect(response.statusCode).toBe(409)
+        expect(response.json().error.code).toBe('CONFLICT')
+      }
+      // Ни source, ни занятый destination не перезаписаны и не исчезли.
+      await expect(
+        readFile(path.join(workspaceRoot, 'model/spec.c4'), 'utf8'),
+      ).resolves.toBe(literalContent)
+      await expect(readFile(path.join(workspaceRoot, 'model/taken.c4'), 'utf8')).resolves.toBe(
+        'taken\n',
+      )
+      expect((await stat(path.join(workspaceRoot, 'model/occupied'))).isDirectory()).toBe(true)
+      await expect(readFile(path.join(workspaceRoot, 'notes.c4'), 'utf8')).resolves.toBe(
+        'notes\n',
+      )
+    } finally {
+      await app.close()
+    }
+  })
+
+  it('rejects traversal, symlinks outside and missing sources through the common guard', async () => {
+    const { app, workspaceRoot } = await buildAppWithEntries()
+    const outsideDirectory = await mkdtemp(path.join(tmpdir(), 'outside-'))
+    createdDirectories.push(outsideDirectory)
+    await writeFile(path.join(outsideDirectory, 'secret.c4'), 'outside\n', 'utf8')
+    // Symlink-источник наружу workspace.
+    await symlink(outsideDirectory, path.join(workspaceRoot, 'linked'))
+    // Symlink с именем destination, ведущий наружу.
+    await symlink(path.join(outsideDirectory, 'secret.c4'), path.join(workspaceRoot, 'trap.c4'))
+
+    try {
+      const [traversal, absolute, symlinkSource, symlinkDestination, missing, fileTarget] =
+        await Promise.all([
+          app.inject({
+            method: 'POST',
+            url: '/api/rename',
+            payload: { path: '../outside', name: 'renamed.c4' },
+          }),
+          app.inject({
+            method: 'POST',
+            url: '/api/rename',
+            payload: { path: '/etc/passwd', name: 'renamed.c4' },
+          }),
+          app.inject({
+            method: 'POST',
+            url: '/api/rename',
+            payload: { path: 'linked', name: 'renamed' },
+          }),
+          app.inject({
+            method: 'POST',
+            url: '/api/rename',
+            payload: { path: 'notes.c4', name: 'trap.c4' },
+          }),
+          app.inject({
+            method: 'POST',
+            url: '/api/rename',
+            payload: { path: 'missing.c4', name: 'renamed.c4' },
+          }),
+          // Источник — корень workspace (не запись в нём).
+          app.inject({
+            method: 'POST',
+            url: '/api/rename',
+            payload: { path: '', name: 'renamed.c4' },
+          }),
+        ])
+
+      for (const response of [traversal, absolute, symlinkSource, symlinkDestination]) {
+        expect(response.statusCode).toBe(403)
+        expect(response.json().error.code).toBe('PATH_OUTSIDE_WORKSPACE')
+      }
+      expect(missing.statusCode).toBe(404)
+      expect(missing.json().error.code).toBe('NOT_FOUND')
+      expect(fileTarget.statusCode).toBe(400)
+      expect(fileTarget.json().error.code).toBe('INVALID_PATH')
+
+      // Ничего не переименовано и снаружи ничего не создано.
+      await expect(readFile(path.join(workspaceRoot, 'notes.c4'), 'utf8')).resolves.toBe(
+        'notes\n',
+      )
+      await expect(access(path.join(outsideDirectory, 'renamed.c4'))).rejects.toThrow()
+    } finally {
+      await app.close()
+    }
+  })
+
+  it('rejects path-like, hidden and disallowed new names before any rename', async () => {
+    const { app, workspaceRoot } = await buildAppWithEntries()
+    await writeFile(
+      path.join(workspaceRoot, 'likec4.config.json'),
+      '{"name":"fixture"}',
+      'utf8',
+    )
+
+    try {
+      const [
+        pathName,
+        backslashName,
+        hiddenDirectory,
+        disallowedFile,
+        disallowedConfig,
+        empty,
+        noBody,
+      ] = await Promise.all([
+        app.inject({
+          method: 'POST',
+          url: '/api/rename',
+          payload: { path: 'model/spec.c4', name: 'nested/architecture.c4' },
+        }),
+        app.inject({
+          method: 'POST',
+          url: '/api/rename',
+          payload: { path: 'model/spec.c4', name: 'nested\\architecture.c4' },
+        }),
+        app.inject({
+          method: 'POST',
+          url: '/api/rename',
+          payload: { path: 'model/nested', name: '.stash' },
+        }),
+        // Файл обязан оставаться разрешённым классификатором REQ-04.
+        app.inject({
+          method: 'POST',
+          url: '/api/rename',
+          payload: { path: 'model/spec.c4', name: 'architecture.md' },
+        }),
+        app.inject({
+          method: 'POST',
+          url: '/api/rename',
+          payload: { path: 'likec4.config.json', name: 'package.config.json' },
+        }),
+        app.inject({
+          method: 'POST',
+          url: '/api/rename',
+          payload: { path: 'model/spec.c4', name: '   ' },
+        }),
+        app.inject({ method: 'POST', url: '/api/rename' }),
+      ])
+
+      for (const response of [hiddenDirectory, disallowedFile, disallowedConfig, empty, noBody]) {
+        expect(response.statusCode).toBe(400)
+        expect(response.json().error.code).toBe('VALIDATION_ERROR')
+      }
+      for (const response of [pathName, backslashName]) {
+        expect(response.statusCode).toBe(400)
+        expect(response.json().error.code).toBe('INVALID_PATH')
+      }
+
+      // Ни одна запись не переименована.
+      await expect(
+        readFile(path.join(workspaceRoot, 'model/spec.c4'), 'utf8'),
+      ).resolves.toBe(literalContent)
+      expect((await stat(path.join(workspaceRoot, 'model/nested'))).isDirectory()).toBe(true)
+      await expect(
+        readFile(path.join(workspaceRoot, 'likec4.config.json'), 'utf8'),
+      ).resolves.toBe('{"name":"fixture"}')
+    } finally {
+      await app.close()
+    }
+  })
+})
+
 describe('REQ-14 API', () => {
   it('returns the whole multi-file model with workspace-relative data only', async () => {
     const { app } = await buildAppWithMultiFileProject()

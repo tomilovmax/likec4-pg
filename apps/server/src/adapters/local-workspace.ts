@@ -4,6 +4,7 @@ import type {
   CreateDirectoryResponse,
   DiagramResponse,
   FileContentResponse,
+  FileEntry,
   FilesResponse,
   ProjectResponse,
   WorkspaceResponse,
@@ -15,6 +16,7 @@ import {
   createWorkspaceDirectory,
   createWorkspaceFile,
   readWorkspaceFile,
+  renameWorkspaceEntry,
   saveWorkspaceFile,
 } from '../workspace-file.js'
 import { listWorkspaceFiles } from '../workspace-tree.js'
@@ -80,6 +82,12 @@ export class LocalWorkspaceProvider implements WorkspacePort {
     name: string,
   ): Promise<CreateDirectoryResponse> {
     return createWorkspaceDirectory(this.paths, { parent, name })
+  }
+
+  // REQ-10: rename в том же каталоге через общий guard REQ-03 (source —
+  // resolveExisting, destination — resolveChild) без неявного overwrite.
+  async renameEntry(userPath: string, name: string): Promise<FileEntry> {
+    return renameWorkspaceEntry(this.paths, { path: userPath, name })
   }
 
   // REQ-14: полная multi-file модель из доверенного realpath-корня REQ-03;

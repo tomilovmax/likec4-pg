@@ -11,6 +11,9 @@ import {
   fileContentResponseSchema,
   filesResponseSchema,
   type DiagramResponse,
+  renameEntryResponseSchema,
+  type RenameEntryRequest,
+  type RenameEntryResponse,
   saveFileResponseSchema,
   type FileContentResponse,
   type FilesResponse,
@@ -93,6 +96,9 @@ export const api = {
     payload: CreateDirectoryRequest,
   ): Promise<CreateDirectoryResponse> =>
     sendJson('POST', '/api/directories', payload, createDirectoryResponseSchema),
+  // REQ-10: переименование записи в её каталоге; ответ — entry нового пути.
+  renameEntry: (payload: RenameEntryRequest): Promise<RenameEntryResponse> =>
+    sendJson('POST', '/api/rename', payload, renameEntryResponseSchema),
   getDiagram: (): Promise<DiagramResponse> =>
     request('/api/diagram', diagramResponseSchema),
 }

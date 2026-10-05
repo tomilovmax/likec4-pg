@@ -4,6 +4,7 @@ import Fastify, { type FastifyError, type FastifyInstance } from 'fastify'
 import {
   createDirectoryRequestSchema,
   createFileRequestSchema,
+  renameEntryRequestSchema,
   saveFileRequestSchema,
 } from '@likec4-web-ide/contracts'
 
@@ -100,6 +101,20 @@ export async function buildApp(
     reply.header('cache-control', 'no-store')
     reply.status(201)
     return created
+  })
+  // REQ-10: переименование файла или каталога. Source и новое имя идут телом
+  // JSON — тот же принцип, что у REQ-08/09; оба пути резолвятся общим guard’ом
+  // REQ-03 внутри renameEntry. Успех — 200 с entry нового пути; существующий
+  // destination даёт 409 без overwrite.
+  app.post('/api/rename', async (request, reply) => {
+    const parsed = renameEntryRequestSchema.safeParse(request.body)
+    if (!parsed.success) {
+      throw new ApiError(400, 'VALIDATION_ERROR', 'Invalid rename request body')
+    }
+    const renamed = await workspace.renameEntry(parsed.data.path, parsed.data.name)
+    reply.header('cache-control', 'no-store')
+    reply.status(200)
+    return renamed
   })
   // REQ-05: чтение файла по workspace-относительному пути. Wildcard-параметр
   // приходит от Fastify уже URL-decoded и уходит в общий path guard REQ-03.
