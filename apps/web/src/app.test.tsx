@@ -230,10 +230,10 @@ describe('REQ-04 files panel', () => {
     expect(within(files).getByText('likec4.config.json')).toBeTruthy()
 
     const likec4File = within(files).getByRole('button', {
-      name: /specification\.c4/,
+      name: /^Открыть model\/specification\.c4$/,
     })
     const configFile = within(files).getByRole('button', {
-      name: /likec4\.config\.json/,
+      name: /^Открыть likec4\.config\.json$/,
     })
     expect(likec4File.dataset.language).toBe('likec4')
     expect(configFile.dataset.language).toBe('config')
@@ -263,7 +263,7 @@ describe('REQ-04 files panel', () => {
     const editor = screen.getByRole('region', { name: 'Code Editor' })
 
     const specification = await waitFor(() =>
-      within(files).getByRole('button', { name: /specification\.c4/ }),
+      within(files).getByRole('button', { name: /^Открыть model\/specification\.c4$/ }),
     )
     fireEvent.click(specification)
 
@@ -314,7 +314,7 @@ describe('REQ-05 open file', () => {
     const editor = screen.getByRole('region', { name: 'Code Editor' })
 
     const specification = await waitFor(() =>
-      within(files).getByRole('button', { name: /specification\.c4/ }),
+      within(files).getByRole('button', { name: /^Открыть model\/specification\.c4$/ }),
     )
     fireEvent.click(specification)
 
@@ -449,7 +449,7 @@ describe('REQ-06 editor buffer', () => {
     const files = screen.getByRole('region', { name: 'Files' })
     const editor = screen.getByRole('region', { name: 'Code Editor' })
 
-    await openFile(files, /specification\.c4/)
+    await openFile(files, /^Открыть model\/specification\.c4$/)
 
     const textarea = await waitFor(() => editorTextarea(editor))
     expect(textarea.value).toBe(savedSpecification)
@@ -474,21 +474,21 @@ describe('REQ-06 editor buffer', () => {
     const files = screen.getByRole('region', { name: 'Files' })
     const editor = screen.getByRole('region', { name: 'Code Editor' })
 
-    await openFile(files, /specification\.c4/)
+    await openFile(files, /^Открыть model\/specification\.c4$/)
     const specificationTextarea = await waitFor(() => editorTextarea(editor))
     fireEvent.change(specificationTextarea, { target: { value: editedSpecification } })
     await waitFor(() => {
       expect(within(editor).getByText(/не сохранён/)).toBeTruthy()
     })
 
-    await openFile(files, /overview\.likec4/)
+    await openFile(files, /^Открыть views\/overview\.likec4$/)
     await waitFor(() => {
       expect(editorTextarea(editor).value).toBe(savedOverview)
     })
     expect(within(editor).queryByText(/не сохранён/)).toBeNull()
     expect(files.querySelectorAll('.file-tree__dirty')).toHaveLength(1)
 
-    await openFile(files, /specification\.c4/)
+    await openFile(files, /^Открыть model\/specification\.c4$/)
     await waitFor(() => {
       expect(editorTextarea(editor).value).toBe(editedSpecification)
     })
@@ -518,7 +518,7 @@ describe('REQ-06 editor buffer', () => {
     const editor = screen.getByRole('region', { name: 'Code Editor' })
     const diagram = screen.getByRole('region', { name: 'Diagram' })
 
-    await openFile(files, /specification\.c4/)
+    await openFile(files, /^Открыть model\/specification\.c4$/)
 
     await waitFor(() => {
       expect(within(diagram).getByRole('alert').textContent).toContain('Diagram request failed')
@@ -538,7 +538,7 @@ describe('REQ-06 editor buffer', () => {
 
     const files = screen.getByRole('region', { name: 'Files' })
     const editor = screen.getByRole('region', { name: 'Code Editor' })
-    await openFile(files, /specification\.c4/)
+    await openFile(files, /^Открыть model\/specification\.c4$/)
 
     await waitFor(() => {
       expect(readSyncedSources().map((source) => source.path).sort()).toEqual([
@@ -564,7 +564,7 @@ describe('REQ-06 editor buffer', () => {
       expect(within(editor).getByText(/не сохранён/)).toBeTruthy()
     })
 
-    await openFile(files, /overview\.likec4/)
+    await openFile(files, /^Открыть views\/overview\.likec4$/)
     await waitFor(() => {
       expect(within(editor).getByLabelText('Диагностика LikeC4').textContent).toContain('Unexpected token')
       expect(within(editor).getByText(/строка 2, столбец 3/)).toBeTruthy()
@@ -578,7 +578,7 @@ describe('REQ-06 editor buffer', () => {
 
     const files = screen.getByRole('region', { name: 'Files' })
     const editor = screen.getByRole('region', { name: 'Code Editor' })
-    await openFile(files, /specification\.c4/)
+    await openFile(files, /^Открыть model\/specification\.c4$/)
     await waitFor(() => {
       expect(readSyncedSources()).toHaveLength(2)
     })
@@ -644,7 +644,7 @@ describe('REQ-15 diagram preview', () => {
   async function openSpecificationFile() {
     const files = screen.getByRole('region', { name: 'Files' })
     const entry = await waitFor(() =>
-      within(files).getByRole('button', { name: /specification\.c4/ }),
+      within(files).getByRole('button', { name: /^Открыть model\/specification\.c4$/ }),
     )
     fireEvent.click(entry)
     return files
@@ -816,7 +816,7 @@ describe('REQ-07 save buffer', () => {
     const editor = screen.getByRole('region', { name: 'Code Editor' })
 
     const entry = await waitFor(() =>
-      within(files).getByRole('button', { name: /specification\.c4/ }),
+      within(files).getByRole('button', { name: /^Открыть model\/specification\.c4$/ }),
     )
     fireEvent.click(entry)
 
@@ -1023,7 +1023,7 @@ describe('REQ-08 create file', () => {
 
     // Дерево перечитано из server state и содержит новый файл.
     await waitFor(() => {
-      expect(within(files).getByRole('button', { name: /new-notes\.c4/ })).toBeTruthy()
+      expect(within(files).getByRole('button', { name: /^Открыть model\/new-notes\.c4$/ })).toBeTruthy()
     })
     expect(within(files).queryByLabelText('Имя файла')).toBeNull()
 
@@ -1061,7 +1061,7 @@ describe('REQ-08 create file', () => {
       expect(within(files).getByRole('alert').textContent).toContain('уже существует')
     })
     // Ложного entry нет: дерево не перечитано, файла в нём не появилось.
-    expect(within(files).queryByRole('button', { name: /notes\.c4/ })).toBeNull()
+    expect(within(files).queryByRole('button', { name: /^Открыть .*notes\.c4$/ })).toBeNull()
     expect(
       fetchMock.mock.calls.filter(([path, init]) => path === '/api/files' && init?.method !== 'POST'),
     ).toHaveLength(1)
@@ -1124,7 +1124,7 @@ describe('REQ-08 create file', () => {
       )
     })
     // Дерево не тронуто, редактор остался без открытого файла.
-    expect(within(files).queryByRole('button', { name: /new-notes\.c4/ })).toBeNull()
+    expect(within(files).queryByRole('button', { name: /^Открыть model\/new-notes\.c4$/ })).toBeNull()
     expect(
       screen.getByRole('region', { name: 'Code Editor' }).querySelector('.opened-file'),
     ).toBeNull()
@@ -1331,6 +1331,340 @@ describe('REQ-09 create directory', () => {
     expect(
       screen.getByRole('region', { name: 'Code Editor' }).querySelector('.opened-file'),
     ).toBeNull()
+  })
+})
+
+describe('REQ-10 rename entry', () => {
+  const savedSpecification = 'specification {\n  demo = "λ"\n}'
+  const editedSpecification = 'specification {\n  demo = "edited"\n}'
+  const savedVersion = 'c'.repeat(64)
+
+  interface RenameCall {
+    body: { path: string; name: string }
+  }
+
+  /**
+   * POST /api/rename управляется хендлером; успех заменяет дерево на вариант
+   * с переименованной записью (симметрично server state).
+   */
+  function stubApiWithRename(
+    renameHandler: (call: RenameCall) => Promise<Response>,
+    renamedItems: () => typeof nestedFilesResponse.items,
+  ) {
+    const renameCalls: RenameCall[] = []
+    let renameSucceeded = false
+    const fetchMock = vi.fn((path: string, init?: RequestInit): Promise<Response> => {
+      if (path === '/api/rename' && init?.method === 'POST') {
+        const call: RenameCall = {
+          body: JSON.parse(String(init.body)) as { path: string; name: string },
+        }
+        renameCalls.push(call)
+        return renameHandler(call).then((response) => {
+          if (response.ok) {
+            renameSucceeded = true
+          }
+          return response
+        })
+      }
+      if (path === '/api/files') {
+        return Promise.resolve(
+          jsonResponse({
+            items: renameSucceeded ? renamedItems() : nestedFilesResponse.items,
+          }),
+        )
+      }
+      if (path === '/api/workspace') {
+        return Promise.resolve(
+          jsonResponse({ status: 'ready', displayName: 'architecture' }),
+        )
+      }
+      if (path === '/api/diagram') {
+        return Promise.resolve(jsonResponse({ status: 'empty', reason: 'NO_VIEWS' }))
+      }
+      if (path === '/api/files/model/specification.c4' && init?.method !== 'PUT') {
+        return Promise.resolve(
+          jsonResponse({
+            path: 'model/specification.c4',
+            name: 'specification.c4',
+            language: 'likec4',
+            content: savedSpecification,
+            version: savedVersion,
+          }),
+        )
+      }
+      return Promise.reject(new Error(`unexpected fetch: ${path}`))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    return { renameCalls, fetchMock }
+  }
+
+  async function openSpecification(files: HTMLElement, editor: HTMLElement) {
+    const entry = await waitFor(() =>
+      within(files).getByRole('button', { name: /^Открыть model\/specification\.c4$/ }),
+    )
+    fireEvent.click(entry)
+    await waitFor(() => {
+      expect(editorTextarea(editor).value).toBe(savedSpecification)
+    })
+    return entry
+  }
+
+  it('renames the open file: tree reloads and the tab follows the new path with its buffer', async () => {
+    const renamedItems = () => [
+      { path: 'model', name: 'model', kind: 'directory' },
+      {
+        path: 'model/architecture.c4',
+        name: 'architecture.c4',
+        kind: 'file',
+        language: 'likec4',
+      },
+      {
+        path: 'views/overview.likec4',
+        name: 'overview.likec4',
+        kind: 'file',
+        language: 'likec4',
+      },
+      { path: 'views', name: 'views', kind: 'directory' },
+      {
+        path: 'likec4.config.json',
+        name: 'likec4.config.json',
+        kind: 'file',
+        language: 'config',
+      },
+    ]
+    const { renameCalls, fetchMock } = stubApiWithRename(
+      () =>
+        Promise.resolve(
+          jsonResponse({
+            path: 'model/architecture.c4',
+            name: 'architecture.c4',
+            kind: 'file',
+            language: 'likec4',
+          }),
+        ),
+      renamedItems,
+    )
+
+    render(<App />)
+
+    const files = screen.getByRole('region', { name: 'Files' })
+    const editor = screen.getByRole('region', { name: 'Code Editor' })
+    await openSpecification(files, editor)
+
+    // Dirty buffer до переименования: rename не должен его терять.
+    fireEvent.change(editorTextarea(editor), { target: { value: editedSpecification } })
+    await waitFor(() => {
+      expect(within(editor).getByText(/не сохранён/)).toBeTruthy()
+    })
+
+    fireEvent.click(
+      within(files).getByRole('button', { name: 'Переименовать model/specification.c4' }),
+    )
+    const input = within(files).getByLabelText('Новое имя')
+    fireEvent.change(input, { target: { value: 'architecture.c4' } })
+    expect(within(files).getByRole('status').textContent).toContain(
+      'Будет: model/architecture.c4',
+    )
+    fireEvent.click(within(files).getByRole('button', { name: 'Переименовать' }))
+
+    expect(renameCalls).toEqual([
+      { body: { path: 'model/specification.c4', name: 'architecture.c4' } },
+    ])
+
+    // Дерево перечитано из server state: новый путь есть, старого нет.
+    await waitFor(() => {
+      expect(
+        within(files).getByRole('button', { name: /^Открыть model\/architecture\.c4$/ }),
+      ).toBeTruthy()
+    })
+    expect(
+      within(files).queryByRole('button', { name: /^Открыть model\/specification\.c4$/ }),
+    ).toBeNull()
+    expect(within(files).queryByLabelText('Новое имя')).toBeNull()
+
+    // Вкладка следует за новым путём, dirty buffer пережил переименование.
+    await waitFor(() => {
+      expect(editor.querySelector('.opened-file__meta')?.textContent).toContain(
+        'model/architecture.c4',
+      )
+    })
+    expect(within(editor).getByText(/не сохранён/)).toBeTruthy()
+    expect(readFakeModel('model/architecture.c4')).toBe(editedSpecification)
+    // Дерево перечитано после успеха (не по ошибке).
+    const listRequests = fetchMock.mock.calls.filter(
+      ([path, init]) => path === '/api/files' && init?.method !== 'POST',
+    )
+    expect(listRequests.length).toBeGreaterThanOrEqual(2)
+  })
+
+  it('renames a directory and rebinds the open file inside it', async () => {
+    const renamedItems = () => [
+      { path: 'domain', name: 'domain', kind: 'directory' },
+      {
+        path: 'domain/specification.c4',
+        name: 'specification.c4',
+        kind: 'file',
+        language: 'likec4',
+      },
+      {
+        path: 'views/overview.likec4',
+        name: 'overview.likec4',
+        kind: 'file',
+        language: 'likec4',
+      },
+      { path: 'views', name: 'views', kind: 'directory' },
+      {
+        path: 'likec4.config.json',
+        name: 'likec4.config.json',
+        kind: 'file',
+        language: 'config',
+      },
+    ]
+    stubApiWithRename(
+      () =>
+        Promise.resolve(jsonResponse({ path: 'domain', name: 'domain', kind: 'directory' })),
+      renamedItems,
+    )
+
+    render(<App />)
+
+    const files = screen.getByRole('region', { name: 'Files' })
+    const editor = screen.getByRole('region', { name: 'Code Editor' })
+    await openSpecification(files, editor)
+    fireEvent.change(editorTextarea(editor), { target: { value: editedSpecification } })
+    await waitFor(() => {
+      expect(within(editor).getByText(/не сохранён/)).toBeTruthy()
+    })
+
+    fireEvent.click(within(files).getByRole('button', { name: 'Переименовать model' }))
+    fireEvent.change(within(files).getByLabelText('Новое имя'), {
+      target: { value: 'domain' },
+    })
+    fireEvent.click(within(files).getByRole('button', { name: 'Переименовать' }))
+
+    // Вкладка файла внутри переименованного каталога перепривязана, buffer цел.
+    await waitFor(() => {
+      expect(within(files).getByRole('button', { name: /^Открыть domain\/specification\.c4$/ })).toBeTruthy()
+    })
+    await waitFor(() => {
+      expect(editor.querySelector('.opened-file__meta')?.textContent).toContain(
+        'domain/specification.c4',
+      )
+    })
+    expect(readFakeModel('domain/specification.c4')).toBe(editedSpecification)
+    expect(within(editor).getByText(/не сохранён/)).toBeTruthy()
+  })
+
+  it('shows the conflict and keeps the tree unchanged when the destination is taken', async () => {
+    const { renameCalls, fetchMock } = stubApiWithRename(
+      () =>
+        Promise.resolve(
+          jsonResponse(
+            {
+              error: {
+                code: 'CONFLICT',
+                message: 'Entry "overview.likec4" already exists in this directory.',
+              },
+            },
+            409,
+          ),
+        ),
+      () => nestedFilesResponse.items,
+    )
+
+    render(<App />)
+
+    const files = screen.getByRole('region', { name: 'Files' })
+    const editor = screen.getByRole('region', { name: 'Code Editor' })
+    await openSpecification(files, editor)
+
+    fireEvent.click(
+      within(files).getByRole('button', { name: 'Переименовать model/specification.c4' }),
+    )
+    fireEvent.change(within(files).getByLabelText('Новое имя'), {
+      target: { value: 'overview.likec4' },
+    })
+    // После открытия файла дерево уже не перечитывалось: фоновая загрузка
+    // LikeC4-источников (REQ-19) — это readFile-запросы, не список.
+    const listRequestsBefore = fetchMock.mock.calls.filter(
+      ([path, init]) => path === '/api/files' && init?.method !== 'POST',
+    ).length
+    fireEvent.click(within(files).getByRole('button', { name: 'Переименовать' }))
+
+    await waitFor(() => {
+      expect(within(files).getByRole('alert').textContent).toContain('уже существует')
+    })
+    // Ложного успеха нет: дерево не перечитано, форма открыта для исправления,
+    // вкладка не уехала на несуществующий путь.
+    expect(
+      fetchMock.mock.calls.filter(([path, init]) => path === '/api/files' && init?.method !== 'POST'),
+    ).toHaveLength(listRequestsBefore)
+    expect(within(files).getByLabelText('Новое имя')).toBeTruthy()
+    expect(
+      within(files).getByRole('button', { name: /^Открыть model\/specification\.c4$/ }),
+    ).toBeTruthy()
+    expect(editor.querySelector('.opened-file__meta')?.textContent).toContain(
+      'model/specification.c4',
+    )
+    expect(renameCalls).toHaveLength(1)
+  })
+
+  it('validates the new name before any request and cancels without one', async () => {
+    const { renameCalls } = stubApiWithRename(
+      () => Promise.resolve(jsonResponse({})),
+      () => nestedFilesResponse.items,
+    )
+
+    render(<App />)
+
+    const files = screen.getByRole('region', { name: 'Files' })
+    await waitFor(() => {
+      expect(within(files).getByText('specification.c4')).toBeTruthy()
+    })
+
+    fireEvent.click(
+      within(files).getByRole('button', { name: 'Переименовать model/specification.c4' }),
+    )
+
+    // Unchanged имя — no-op: submit недоступен без ошибки.
+    expect(within(files).getByRole('button', { name: 'Переименовать' })).toHaveProperty(
+      'disabled',
+      true,
+    )
+
+    // Path-подобное имя отклоняется инлайн без API-запроса.
+    fireEvent.change(within(files).getByLabelText('Новое имя'), {
+      target: { value: 'nested/architecture.c4' },
+    })
+    await waitFor(() => {
+      expect(within(files).getByRole('alert').textContent).toContain('Имя не может содержать')
+    })
+    expect(within(files).getByRole('button', { name: 'Переименовать' })).toHaveProperty(
+      'disabled',
+      true,
+    )
+
+    // Недопустимое расширение файла отклоняется до запроса.
+    fireEvent.change(within(files).getByLabelText('Новое имя'), {
+      target: { value: 'architecture.md' },
+    })
+    await waitFor(() => {
+      expect(within(files).getByRole('alert').textContent).toContain('.c4 или .likec4')
+    })
+
+    // Скрытое имя каталога отклоняется до запроса.
+    fireEvent.click(within(files).getByRole('button', { name: 'Переименовать model' }))
+    fireEvent.change(within(files).getByLabelText('Новое имя'), {
+      target: { value: '.stash' },
+    })
+    await waitFor(() => {
+      expect(within(files).getByRole('alert').textContent).toContain('скрыта из дерева')
+    })
+
+    // Cancel закрывает форму без API-запроса.
+    fireEvent.click(within(files).getByRole('button', { name: 'Отмена' }))
+    expect(within(files).queryByLabelText('Новое имя')).toBeNull()
+    expect(renameCalls).toEqual([])
   })
 })
 

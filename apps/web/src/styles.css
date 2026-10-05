@@ -254,6 +254,98 @@ button:hover {
   white-space: nowrap;
 }
 
+/* REQ-10: строка дерева — имя/кнопка открытия плюс кнопка переименования. */
+.file-tree__item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.file-tree__item > .file-tree__open,
+.file-tree__item > .file-tree__directory {
+  flex: 1 1 auto;
+  width: auto;
+  min-width: 0;
+}
+
+.file-tree__item > .file-tree,
+.file-tree__item > .rename-entry {
+  flex-basis: 100%;
+}
+
+.file-tree__rename {
+  flex: none;
+  margin-left: auto;
+  border: 0;
+  border-radius: 0.25rem;
+  background: transparent;
+  padding: 0.1rem 0.3rem;
+  color: #6f7d95;
+  font-size: 0.78rem;
+  line-height: 1.2;
+}
+
+.file-tree__rename:hover {
+  background: #262d3b;
+  color: #c7d3e8;
+}
+
+/* REQ-10: форма переименования внутри дерева — те же правила, что у форм
+   создания над деревом. */
+.rename-entry {
+  display: grid;
+  gap: 0.4rem;
+  border: 1px solid #343b4a;
+  border-radius: 0.4rem;
+  background: #20242e;
+  margin: 0.25rem 0;
+  padding: 0.6rem;
+}
+
+.rename-entry__field {
+  display: grid;
+  gap: 0.25rem;
+  color: #9fb0cd;
+  font-size: 0.78rem;
+}
+
+.rename-entry__input {
+  border: 1px solid #4d5870;
+  border-radius: 0.35rem;
+  background: #252b37;
+  color: inherit;
+  font: inherit;
+  font-size: 0.85rem;
+  padding: 0.4rem 0.5rem;
+}
+
+.rename-entry__hint {
+  margin: 0;
+  color: #919aad;
+  font-size: 0.75rem;
+  overflow-wrap: anywhere;
+}
+
+.rename-entry__error {
+  margin: 0;
+  border: 1px solid #7e4547;
+  border-radius: 0.3rem;
+  background: #3d272c;
+  padding: 0.4rem 0.55rem;
+  color: #ffbab5;
+  font-size: 0.78rem;
+  line-height: 1.4;
+}
+
+.rename-entry__actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.rename-entry__actions button {
+  font-size: 0.82rem;
+}
+
 .opened-file {
   display: flex;
   height: 100%;

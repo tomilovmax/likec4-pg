@@ -5,6 +5,7 @@ import path from 'node:path'
 import type {
   CreateDirectoryResponse,
   FileContentResponse,
+  FileEntry,
 } from '@likec4-web-ide/contracts'
 
 import { classifyWorkspaceFile } from './domain/allowed-files.js'
@@ -214,6 +215,154 @@ export async function createWorkspaceDirectory(
     name: path.basename(resolved.relativePath),
     kind: 'directory',
   }
+}
+
+export interface RenameWorkspaceEntryInput {
+  /** Workspace-относительный путь существующей записи — источник rename. */
+  path: string
+  /** Новое базовое имя записи в том же каталоге. */
+  name: string
+}
+
+/**
+ * Переименование файла или каталога (REQ-10). Destination — всегда тот же
+ * каталог, что у source (меняется только basename), поэтому операция не может
+ * переместить запись или переименовать каталог в собственного потомка. Оба
+ * пути проходят общий guard REQ-03: source — `resolveExisting` (realpath самой
+ * записи; отсутствующая запись — 404, symlink наружу — 403), destination —
+ * `resolveChild` того же parent’а (занятое имя, включая symlink, проверяется
+ * и по realpath цели).
+ *
+ * Имя валидируется общим правилом REQ-08/09 (`validateEntryName`: не путь, не
+ * пустое, ≤255 байт). Дополнительные требования сохраняют запись видимой для
+ * дерева REQ-04: новое имя файла обязано проходить файловый классификатор
+ * (`400 VALIDATION_ERROR` — иначе rename «спрятал» бы файл из дерева), новое
+ * имя каталога не может начинаться с точки.
+ *
+ * Неявный overwrite запрещён: существующий destination (файл или каталог,
+ * включая случай «переименовать в текущее имя») даёт `409 CONFLICT` до
+ * rename — POSIX rename молча заменил бы файл, а для каталогов — пустой
+ * каталог. После предпроверки `rename` переносит запись одним атомарным
+ * шагом: каталог — вместе со всем вложенным содержимым, содержимое файлов не
+ * читается и не переписывается. `ENOTEMPTY`/`EEXIST` от самого rename (гонка
+ * между предпроверкой и системным вызовом) тоже даёт `409`, `ENOENT`
+ * (source исчез) — `404`; ни один из них не оставляет частичного overwrite.
+ * TOCTOU-окно между предпроверкой и rename — принятое ограничение
+ * single-user MVP, то же, что у guard’а REQ-03.
+ */
+export async function renameWorkspaceEntry(
+  resolver: WorkspacePathResolver,
+  input: RenameWorkspaceEntryInput,
+): Promise<FileEntry> {
+  const source = await resolver.resolveExisting(input.path)
+
+  const stats = await stat(source.absolutePath)
+  const isDirectory = stats.isDirectory()
+  if (!isDirectory && !stats.isFile()) {
+    throw new ApiError(
+      400,
+      'INVALID_PATH',
+      'Path must name a file or directory inside the workspace.',
+    )
+  }
+
+  const name = isDirectory
+    ? validateRenamedDirectoryName(input.name)
+    : validateRenamedFileName(input.name)
+
+  // Destination — тот же parent, что у source; resolveChild guard’а REQ-03
+  // проверяет realpath parent, а для занятого имени — и realpath цели.
+  const parentPath = parentDirectoryOf(source.relativePath)
+  const destination = await resolver.resolveChild(
+    parentPath === '' ? name : `${parentPath}/${name}`,
+  )
+
+  if (await entryExists(destination.absolutePath)) {
+    // Включая имя, совпадающее с текущим: destination занят самим source,
+    // а отдельного overwrite action REQ-10 не предусматривает.
+    throw new ApiError(
+      409,
+      'CONFLICT',
+      `Entry "${name}" already exists in this directory.`,
+    )
+  }
+
+  try {
+    await rename(source.absolutePath, destination.absolutePath)
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code
+    if (code === 'ENOTEMPTY' || code === 'EEXIST') {
+      // Гонка: destination создан между предпроверкой и rename — не 500
+      // и не молчаливая перезапись.
+      throw new ApiError(
+        409,
+        'CONFLICT',
+        `Entry "${name}" already exists in this directory.`,
+      )
+    }
+    if (code === 'ENOENT') {
+      // Source исчез между resolve и rename — это не 500.
+      throw new ApiError(404, 'NOT_FOUND', 'Entry not found in the workspace.')
+    }
+    throw error
+  }
+
+  const entry: FileEntry = {
+    path: destination.relativePath,
+    name: path.basename(destination.relativePath),
+    kind: isDirectory ? 'directory' : 'file',
+  }
+  if (!isDirectory) {
+    // validateRenamedFileName гарантировала классифицируемое имя.
+    entry.language = classifyWorkspaceFile(
+      path.basename(destination.relativePath),
+    )
+  }
+  return entry
+}
+
+/** Каталог записи: '' для корневого уровня workspace. */
+function parentDirectoryOf(relativePath: string): string {
+  const separator = relativePath.lastIndexOf('/')
+  return separator === -1 ? '' : relativePath.slice(0, separator)
+}
+
+async function entryExists(absolutePath: string): Promise<boolean> {
+  try {
+    await stat(absolutePath)
+    return true
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      return false
+    }
+    throw error
+  }
+}
+
+/** Новое имя файла остаётся разрешённым классификатором REQ-04 — иначе файл исчез бы из дерева. */
+function validateRenamedFileName(rawName: string): string {
+  const name = validateEntryName(rawName, 'File')
+  if (classifyWorkspaceFile(name) === undefined) {
+    throw new ApiError(
+      400,
+      'VALIDATION_ERROR',
+      'File must keep an editable LikeC4 name (.c4, .likec4 or a LikeC4 config name).',
+    )
+  }
+  return name
+}
+
+/** Новое имя каталога не начинается с точки — иначе каталог исчез бы из дерева. */
+function validateRenamedDirectoryName(rawName: string): string {
+  const name = validateEntryName(rawName, 'Directory')
+  if (name.startsWith('.')) {
+    throw new ApiError(
+      400,
+      'VALIDATION_ERROR',
+      'Directory name cannot start with a dot — hidden entries are not shown in the tree.',
+    )
+  }
+  return name
 }
 
 /**

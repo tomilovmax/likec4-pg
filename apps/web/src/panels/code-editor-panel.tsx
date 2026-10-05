@@ -4,6 +4,7 @@ import type { FileContentResponse, FileEntry } from '@likec4-web-ide/contracts'
 
 import { api, ApiClientError } from '../api/client'
 import { loadWorkspaceSources, type SourceLoadFailure } from '../api/workspace-sources'
+import type { PathRename } from '../components/desktop-shell'
 import { Panel } from '../components/panel'
 import { ResourceError } from '../components/resource-error'
 import {
@@ -17,6 +18,8 @@ import { useResource } from '../hooks/use-resource'
 
 interface CodeEditorPanelProps {
   selectedFile: FileEntry | null
+  /** REQ-10: последний успешный rename — переносит открытые буферы на новые пути. */
+  lastRename: PathRename | null
   /** Сообщает об изменении dirty state активного buffer’а (только переходы). */
   onDirtyChange: (path: string, dirty: boolean) => void
 }
@@ -44,7 +47,21 @@ type SourceLoadState =
   | { status: 'ready'; failures: readonly SourceLoadFailure[] }
   | { status: 'error'; message: string }
 
-export function CodeEditorPanel({ selectedFile, onDirtyChange }: CodeEditorPanelProps) {
+/**
+ * REQ-10: путь записи до последнего rename, если `path` — его результат
+ * (переименованный каталог перепривязывает и вложенные файлы); null — не затронут.
+ */
+function previousPathAfterRename(path: string, rename: PathRename): string | null {
+  if (path === rename.toPath) {
+    return rename.from
+  }
+  if (path.startsWith(`${rename.toPath}/`)) {
+    return `${rename.from}/${path.slice(rename.toPath.length + 1)}`
+  }
+  return null
+}
+
+export function CodeEditorPanel({ selectedFile, lastRename, onDirtyChange }: CodeEditorPanelProps) {
   const [openFiles, setOpenFiles] = useState<Record<string, OpenFileRecord>>({})
   const [reloadCount, setReloadCount] = useState(0)
   const [sourceLoad, setSourceLoad] = useState<SourceLoadState>({ status: 'ready', failures: [] })
@@ -118,6 +135,39 @@ export function CodeEditorPanel({ selectedFile, onDirtyChange }: CodeEditorPanel
     if (openFiles[path]?.status === 'ready') {
       return
     }
+
+    // REQ-10: путь появился в результате последнего rename — запись переносится
+    // со старого пути вместе с buffer’ом, базой и version token (содержимое
+    // файла rename не меняет, token остаётся валидным для следующего save).
+    // До чтения с диска: fetch перезатёр бы unsaved buffer.
+    const rename = lastRename
+    if (rename !== null) {
+      const previousPath = previousPathAfterRename(path, rename)
+      if (previousPath !== null && openFiles[previousPath] !== undefined) {
+        setOpenFiles((current) => {
+          const existing = current[previousPath]
+          if (current[path] !== undefined || existing === undefined) {
+            return current
+          }
+          const next = { ...current }
+          delete next[previousPath]
+          next[path] =
+            existing.status === 'ready'
+              ? {
+                  ...existing,
+                  content: {
+                    ...existing.content,
+                    path,
+                    name: path.slice(path.lastIndexOf('/') + 1),
+                  },
+                }
+              : existing
+          return next
+        })
+        return
+      }
+    }
+
     setOpenFiles((current) => {
       if (current[path]?.status === 'ready') {
         return current
@@ -157,7 +207,7 @@ export function CodeEditorPanel({ selectedFile, onDirtyChange }: CodeEditorPanel
     return () => {
       isCurrent = false
     }
-  }, [path, reloadCount])
+  }, [path, reloadCount, lastRename])
 
   const handleBufferChange = useCallback(
     (value: string) => {
@@ -308,6 +358,7 @@ export function CodeEditorPanel({ selectedFile, onDirtyChange }: CodeEditorPanel
         />
       ) : (
         <OpenedFile
+          buffer={record.buffer}
           content={record.content}
           diagnostics={diagnostics[record.content.path] ?? []}
           dirty={record.dirty}
@@ -379,12 +430,15 @@ function NoFileSelected() {
  * backend’а буквально, не форматируется и не записывается browser runtime’ом.
  */
 function OpenedFile({
+  buffer,
   content,
   diagnostics,
   dirty,
   save,
   onBufferChange,
 }: {
+  /** REQ-10: seed новой Monaco-модели после rename — актуальный buffer, не база. */
+  buffer: string
   content: FileContentResponse
   diagnostics: readonly import('../editor/likec4-language-runtime').LikeC4Diagnostic[]
   dirty: boolean
@@ -417,7 +471,7 @@ function OpenedFile({
       <Diagnostics diagnostics={diagnostics} />
       <MonacoEditor
         ariaLabel={`Исходный текст ${content.path}`}
-        initialValue={content.content}
+        initialValue={buffer}
         language={content.language}
         onChange={onBufferChange}
         path={content.path}

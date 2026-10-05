@@ -13,11 +13,16 @@ interface FilesPanelProps {
   dirtyPaths: ReadonlySet<string>
   selectedPath: string | null
   onOpenFile: (file: FileEntry) => void
+  /** REQ-10: успешное переименование — shell синхронизирует вкладку и dirty set. */
+  onRenamed: (from: string, to: FileEntry) => void
 }
 
-export function FilesPanel({ dirtyPaths, selectedPath, onOpenFile }: FilesPanelProps) {
+export function FilesPanel({ dirtyPaths, selectedPath, onOpenFile, onRenamed }: FilesPanelProps) {
   const loadFiles = useCallback(() => api.listFiles(), [])
   const { state, reload } = useResource(loadFiles)
+
+  // REQ-10: открыта одна форма переименования — запуск другой закрывает её.
+  const [renamingPath, setRenamingPath] = useState<string | null>(null)
 
   // Каталоги для выбора parent в формах создания (REQ-08/09); после REQ-09
   // сюда попадают и пустые каталоги — созданный каталог сразу можно выбрать.
@@ -72,7 +77,15 @@ export function FilesPanel({ dirtyPaths, selectedPath, onOpenFile }: FilesPanelP
           nodes={buildFileTree(state.data.items)}
           dirtyPaths={dirtyPaths}
           selectedPath={selectedPath}
+          renamingPath={renamingPath}
+          onStartRename={setRenamingPath}
           onOpenFile={onOpenFile}
+          onRenamed={(from, to) => {
+            // Дерево перечитывается из server state, форма закрывается.
+            setRenamingPath(null)
+            onRenamed(from, to)
+            reload()
+          }}
         />
       )}
     </Panel>
@@ -385,30 +398,29 @@ function FileTreeList({
   nodes,
   dirtyPaths,
   selectedPath,
+  renamingPath,
+  onStartRename,
   onOpenFile,
+  onRenamed,
 }: {
   nodes: FileTreeNode[]
   dirtyPaths: ReadonlySet<string>
   selectedPath: string | null
+  renamingPath: string | null
+  onStartRename: (path: string | null) => void
   onOpenFile: (file: FileEntry) => void
+  onRenamed: (from: string, to: FileEntry) => void
 }) {
   return (
     <ul className="file-tree">
-      {nodes.map((node) =>
-        node.entry.kind === 'directory' ? (
-          <li className="file-tree__item" key={node.entry.path}>
+      {nodes.map((node) => (
+        <li className="file-tree__item" key={node.entry.path}>
+          {node.entry.kind === 'directory' ? (
             <span className="file-tree__directory">{node.entry.name}</span>
-            <FileTreeList
-              nodes={node.children}
-              dirtyPaths={dirtyPaths}
-              selectedPath={selectedPath}
-              onOpenFile={onOpenFile}
-            />
-          </li>
-        ) : (
-          <li className="file-tree__item" key={node.entry.path}>
+          ) : (
             <button
               aria-current={node.entry.path === selectedPath ? 'true' : undefined}
+              aria-label={`Открыть ${node.entry.path}`}
               className="file-tree__open"
               data-language={node.entry.language}
               onClick={() => onOpenFile(node.entry)}
@@ -425,9 +437,161 @@ function FileTreeList({
                 </span>
               )}
             </button>
-          </li>
-        ),
-      )}
+          )}
+          <button
+            aria-label={`Переименовать ${node.entry.path}`}
+            className="file-tree__rename"
+            onClick={() => {
+              // Повторный клик по той же записи закрывает форму.
+              onStartRename(renamingPath === node.entry.path ? null : node.entry.path)
+            }}
+            title={`Переименовать ${node.entry.path}`}
+            type="button"
+          >
+            ✎
+          </button>
+          {renamingPath === node.entry.path && (
+            <RenameForm
+              entry={node.entry}
+              onCancel={() => onStartRename(null)}
+              onRenamed={onRenamed}
+            />
+          )}
+          {node.entry.kind === 'directory' && (
+            <FileTreeList
+              nodes={node.children}
+              dirtyPaths={dirtyPaths}
+              selectedPath={selectedPath}
+              renamingPath={renamingPath}
+              onStartRename={onStartRename}
+              onOpenFile={onOpenFile}
+              onRenamed={onRenamed}
+            />
+          )}
+        </li>
+      ))}
     </ul>
+  )
+}
+
+/**
+ * Валидация нового имени до запроса (REQ-10): имя — одиночная запись; файл
+ * остаётся LikeC4-исходником (для config-файлов фиксированный список имён
+ * проверяет сервер — инлайн-дублирование списка не делаем), каталог не
+ * становится скрытым; unchanged-имя — no-op, submit недоступен.
+ */
+function resolveRenamedName(
+  entry: FileEntry,
+  rawName: string,
+): { name: string | null; error: string | null } {
+  const trimmed = rawName.trim()
+  if (trimmed === '' || trimmed === entry.name) {
+    return { name: null, error: null }
+  }
+  if (trimmed.includes('/') || trimmed.includes('\\')) {
+    return { name: null, error: 'Имя не может содержать «/» или «\\».' }
+  }
+  if (entry.kind === 'directory') {
+    if (trimmed.startsWith('.')) {
+      return {
+        name: null,
+        error: 'Имя не может начинаться с точки — такая запись скрыта из дерева.',
+      }
+    }
+    return { name: trimmed, error: null }
+  }
+  if (entry.language === 'likec4' && !/\.(c4|likec4)$/i.test(trimmed)) {
+    return {
+      name: null,
+      error: 'Файл должен оставаться LikeC4-исходником: расширение .c4 или .likec4.',
+    }
+  }
+  return { name: trimmed, error: null }
+}
+
+function RenameForm({
+  entry,
+  onCancel,
+  onRenamed,
+}: {
+  entry: FileEntry
+  onCancel: () => void
+  onRenamed: (from: string, to: FileEntry) => void
+}) {
+  const [name, setName] = useState(entry.name)
+  const [error, setError] = useState<string | null>(null)
+  const [renaming, setRenaming] = useState(false)
+
+  const resolved = resolveRenamedName(entry, name)
+  const canSubmit = resolved.name !== null && !renaming
+  // Ошибка запроса приоритетнее инлайн-валидации: она появляется после submit.
+  const shownError = error ?? resolved.error
+  const parentPath = entry.path.slice(0, Math.max(0, entry.path.lastIndexOf('/')))
+
+  const handleSubmit = (event: FormEvent) => {
+    event.preventDefault()
+    const newName = resolved.name
+    if (newName === null || renaming) {
+      return
+    }
+    setRenaming(true)
+    setError(null)
+    void api.renameEntry({ path: entry.path, name: newName }).then(
+      (renamed) => {
+        setRenaming(false)
+        onRenamed(entry.path, renamed)
+      },
+      (submitError: unknown) => {
+        setRenaming(false)
+        const isConflict =
+          submitError instanceof ApiClientError &&
+          submitError.details.error.code === 'CONFLICT'
+        setError(
+          isConflict
+            ? `Запись «${newName}» уже существует в этом каталоге.`
+            : submitError instanceof Error
+              ? submitError.message
+              : 'Не удалось переименовать запись',
+        )
+      },
+    )
+  }
+
+  return (
+    <form className="rename-entry" onSubmit={handleSubmit}>
+      <label className="rename-entry__field">
+        Новое имя
+        <input
+          className="rename-entry__input"
+          onChange={(event) => {
+            setName(event.target.value)
+            setError(null)
+          }}
+          placeholder={entry.name}
+          type="text"
+          value={name}
+        />
+      </label>
+      {resolved.name !== null && (
+        <p className="rename-entry__hint" role="status">
+          Будет: {parentPath === '' ? '' : `${parentPath}/`}
+          {resolved.name}
+        </p>
+      )}
+      {shownError !== null && (
+        <p className="rename-entry__error" role="alert">
+          {shownError}
+        </p>
+      )}
+      <div className="rename-entry__actions">
+        <button disabled={!canSubmit} type="submit">
+          {renaming ? 'Переименовываем…' : 'Переименовать'}
+        </button>
+        {/* Cancel закрывает форму без API-запроса. */}
+        <button onClick={onCancel} type="button">
+          Отмена
+        </button>
+      </div>
+    </form>
   )
 }

@@ -29,11 +29,16 @@ export function MonacoEditor({
   const [wrapperConfig] = useState(() => createLikeC4WrapperConfig())
   const onChangeRef = useRef(onChange)
   onChangeRef.current = onChange
+  // REQ-10: seed новой модели — актуальный buffer (dirty-текст переживает
+  // rename), поэтому initialValue читается из ref: правки buffer не должны
+  // перезапускать эффект, он реагирует только на смену файла/языка.
+  const initialValueRef = useRef(initialValue)
+  initialValueRef.current = initialValue
 
   useEffect(() => {
     let disposed = false
     let subscription: { dispose(): void } | null = null
-    void likeC4LanguageRuntime.openModel(path, language, initialValue).then((model) => {
+    void likeC4LanguageRuntime.openModel(path, language, initialValueRef.current).then((model) => {
       if (disposed) {
         return
       }
@@ -44,7 +49,7 @@ export function MonacoEditor({
       disposed = true
       subscription?.dispose()
     }
-  }, [initialValue, language, path])
+  }, [language, path])
 
   useEffect(() => {
     likeC4LanguageRuntime.setAriaLabel(ariaLabel)
