@@ -5,8 +5,11 @@ import {
   filesResponseSchema,
   type ApiError,
   type DiagramResponse,
+  saveFileResponseSchema,
   type FileContentResponse,
   type FilesResponse,
+  type SaveFileRequest,
+  type SaveFileResponse,
   type WorkspaceResponse,
   workspaceResponseSchema,
 } from '@likec4-web-ide/contracts'
@@ -21,9 +24,14 @@ interface ResponseSchema<T> {
   parse(value: unknown): T
 }
 
-async function request<T>(path: string, schema: ResponseSchema<T>): Promise<T> {
+async function request<T>(
+  path: string,
+  schema: ResponseSchema<T>,
+  init?: RequestInit,
+): Promise<T> {
   const response = await fetch(path, {
     headers: { accept: 'application/json' },
+    ...init,
   })
   const payload: unknown = await response.json()
 
@@ -49,12 +57,27 @@ function fileUrl(relativePath: string): string {
   return `/api/files/${relativePath.split('/').map(encodeURIComponent).join('/')}`
 }
 
+/** REQ-07: атомарное сохранение literal buffer с проверкой version token. */
+async function putJson<T>(
+  path: string,
+  body: unknown,
+  schema: ResponseSchema<T>,
+): Promise<T> {
+  return request(path, schema, {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+}
+
 export const api = {
   getWorkspace: (): Promise<WorkspaceResponse> =>
     request('/api/workspace', workspaceResponseSchema),
   listFiles: (): Promise<FilesResponse> => request('/api/files', filesResponseSchema),
   readFile: (relativePath: string): Promise<FileContentResponse> =>
     request(fileUrl(relativePath), fileContentResponseSchema),
+  saveFile: (relativePath: string, payload: SaveFileRequest): Promise<SaveFileResponse> =>
+    putJson(fileUrl(relativePath), payload, saveFileResponseSchema),
   getDiagram: (): Promise<DiagramResponse> =>
     request('/api/diagram', diagramResponseSchema),
 }

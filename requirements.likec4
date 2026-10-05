@@ -167,7 +167,7 @@ model {
     -> req_language_features 'Редактор получает language integration'
   }
 
-  req_save_file = requirement_open {
+  req_save_file = requirement_met {
     title 'REQ-07 · Атомарное сохранение с защитой от конфликта'
     summary 'Пользователь сохраняет literal text buffer в исходный файл и не перезаписывает чужую новую версию молча.'
     description '''
@@ -176,12 +176,12 @@ model {
       версию. Запись никогда не строится через сериализацию LikeC4 model.
 
       Критерии приёмки:
-      - [ ] пользовательский Ctrl+S сохраняет buffer активного файла
-      - [ ] форматирование и комментарии записываются буквально
-      - [ ] при ошибке записи старое содержимое файла остаётся целым
-      - [ ] устаревший version token даёт явно обрабатываемый conflict, не last-write-wins
-      - [ ] успешный save обновляет version token и снимает dirty state
-      - [ ] tests подтверждают atomic failure и conflict сценарии
+      - [x] пользовательский Ctrl+S сохраняет buffer активного файла
+      - [x] форматирование и комментарии записываются буквально
+      - [x] при ошибке записи старое содержимое файла остаётся целым
+      - [x] устаревший version token даёт явно обрабатываемый conflict, не last-write-wins
+      - [x] успешный save обновляет version token и снимает dirty state
+      - [x] tests подтверждают atomic failure и conflict сценарии
     '''
     -> req_unsaved_changes 'Save UX показывает результат'
     -> req_refresh_project 'Успешное сохранение обновляет модель'

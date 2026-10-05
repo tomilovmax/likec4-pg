@@ -10,6 +10,11 @@ export interface WorkspacePort {
   getWorkspace(): Promise<WorkspaceResponse>
   listFiles(): Promise<FilesResponse>
   readFile(userPath: string): Promise<FileContentResponse>
+  saveFile(
+    userPath: string,
+    content: string,
+    version: string,
+  ): Promise<FileContentResponse>
   getProject(): Promise<ProjectResponse>
   getDiagram(): Promise<DiagramResponse>
 }

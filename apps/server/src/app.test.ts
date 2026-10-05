@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -339,6 +339,205 @@ describe('REQ-05 API', () => {
 
       expect(response.statusCode).toBe(400)
       expect(response.json().error.code).toBe('INVALID_PATH')
+    } finally {
+      await app.close()
+    }
+  })
+})
+
+describe('REQ-07 API', () => {
+  // Буквальный текст: комментарий, CRLF, unicode, нет trailing newline —
+  // сохраняется побайтно, как и открывается.
+  const savedContent =
+    '// комментарий сохраняется буквально\r\nmodel {\r\n  demo = "λ-α"\r\n}\r\n// конца строки в конце нет'
+
+  async function buildAppWithSourceFile() {
+    const { app, workspaceRoot } = await buildConfiguredApp()
+    await mkdir(path.join(workspaceRoot, 'model'))
+    await writeFile(path.join(workspaceRoot, 'model/spec.c4'), 'model {}\n', 'utf8')
+    return { app, workspaceRoot }
+  }
+
+  async function readSourceVersion(app: Awaited<ReturnType<typeof buildConfiguredApp>>['app']) {
+    const response = await app.inject({ method: 'GET', url: '/api/files/model/spec.c4' })
+    expect(response.statusCode).toBe(200)
+    return response.json() as { content: string; version: string }
+  }
+
+  it('saves the literal buffer atomically and returns the new version and ETag', async () => {
+    const { app, workspaceRoot } = await buildAppWithSourceFile()
+
+    try {
+      const opened = await readSourceVersion(app)
+      const response = await app.inject({
+        method: 'PUT',
+        url: '/api/files/model/spec.c4',
+        payload: { content: savedContent, version: opened.version },
+      })
+
+      expect(response.statusCode).toBe(200)
+      expect(response.headers['cache-control']).toBe('no-store')
+      const body = response.json()
+      expect(body).toEqual({
+        path: 'model/spec.c4',
+        name: 'spec.c4',
+        language: 'likec4',
+        content: savedContent,
+        version: body.version,
+      })
+      expect(body.version).toMatch(/^[0-9a-f]{64}$/)
+      expect(body.version).not.toBe(opened.version)
+      expect(response.headers.etag).toBe(`"${body.version}"`)
+      // Файл на диске совпадает побайтно с присланным buffer’ом.
+      await expect(readFile(path.join(workspaceRoot, 'model/spec.c4'), 'utf8')).resolves.toBe(
+        savedContent,
+      )
+      expect(JSON.stringify(body)).not.toContain(workspaceRoot)
+    } finally {
+      await app.close()
+    }
+  })
+
+  it('updates the version token so the next optimistic save succeeds', async () => {
+    const { app } = await buildAppWithSourceFile()
+
+    try {
+      const opened = await readSourceVersion(app)
+      const first = await app.inject({
+        method: 'PUT',
+        url: '/api/files/model/spec.c4',
+        payload: { content: 'model { first }\n', version: opened.version },
+      })
+      expect(first.statusCode).toBe(200)
+
+      // Повторное сохранение со свежей версией — конфликтов нет.
+      const second = await app.inject({
+        method: 'PUT',
+        url: '/api/files/model/spec.c4',
+        payload: { content: 'model { second }\n', version: first.json().version },
+      })
+      expect(second.statusCode).toBe(200)
+    } finally {
+      await app.close()
+    }
+  })
+
+  it('gives 409 CONFLICT for a stale version and leaves the file intact', async () => {
+    const { app, workspaceRoot } = await buildAppWithSourceFile()
+
+    try {
+      const opened = await readSourceVersion(app)
+      // Файл меняется вне IDE после открытия.
+      await writeFile(path.join(workspaceRoot, 'model/spec.c4'), 'external\n', 'utf8')
+
+      const response = await app.inject({
+        method: 'PUT',
+        url: '/api/files/model/spec.c4',
+        payload: { content: 'model { mine }\n', version: opened.version },
+      })
+
+      expect(response.statusCode).toBe(409)
+      expect(response.json().error.code).toBe('CONFLICT')
+      // Чужая версия не перезаписана, частичной записи нет.
+      await expect(readFile(path.join(workspaceRoot, 'model/spec.c4'), 'utf8')).resolves.toBe(
+        'external\n',
+      )
+    } finally {
+      await app.close()
+    }
+  })
+
+  it('rejects traversal, outside symlinks, directories and disallowed names', async () => {
+    const { app, workspaceRoot } = await buildAppWithSourceFile()
+    await writeFile(path.join(workspaceRoot, 'README.md'), 'not likec4', 'utf8')
+    await mkdir(path.join(workspaceRoot, 'sources.c4'))
+
+    try {
+      const [encodedTraversal, absolute, directory, disallowed, missing] = await Promise.all([
+        app.inject({
+          method: 'PUT',
+          url: '/api/files/..%2F..%2Fetc%2Fpasswd',
+          payload: { content: 'model {}\n', version: 'a'.repeat(64) },
+        }),
+        app.inject({
+          method: 'PUT',
+          url: '/api/files/%2Fetc%2Fpasswd',
+          payload: { content: 'model {}\n', version: 'a'.repeat(64) },
+        }),
+        app.inject({
+          method: 'PUT',
+          url: '/api/files/sources.c4',
+          payload: { content: 'model {}\n', version: 'a'.repeat(64) },
+        }),
+        app.inject({
+          method: 'PUT',
+          url: '/api/files/README.md',
+          payload: { content: 'readme', version: 'a'.repeat(64) },
+        }),
+        app.inject({
+          method: 'PUT',
+          url: '/api/files/model/missing.c4',
+          payload: { content: 'model {}\n', version: 'a'.repeat(64) },
+        }),
+      ])
+
+      expect(encodedTraversal.statusCode).toBe(403)
+      expect(encodedTraversal.json().error.code).toBe('PATH_OUTSIDE_WORKSPACE')
+      expect(absolute.statusCode).toBe(403)
+      expect(directory.statusCode).toBe(400)
+      expect(directory.json().error.code).toBe('INVALID_PATH')
+      expect(disallowed.statusCode).toBe(415)
+      expect(disallowed.json().error.code).toBe('UNSUPPORTED_FILE')
+      expect(missing.statusCode).toBe(404)
+      // Ничего лишнего не создано и не перезаписано.
+      await expect(
+        readFile(path.join(workspaceRoot, 'README.md'), 'utf8'),
+      ).resolves.toBe('not likec4')
+    } finally {
+      await app.close()
+    }
+  })
+
+  it('rejects a malformed save payload without touching the file', async () => {
+    const { app, workspaceRoot } = await buildAppWithSourceFile()
+
+    try {
+      const opened = await readSourceVersion(app)
+      const [noVersion, shortVersion, noContent, emptyBody, badJson] = await Promise.all([
+        app.inject({
+          method: 'PUT',
+          url: '/api/files/model/spec.c4',
+          payload: { content: 'model {}\n' },
+        }),
+        app.inject({
+          method: 'PUT',
+          url: '/api/files/model/spec.c4',
+          payload: { content: 'model {}\n', version: 'tooshort' },
+        }),
+        app.inject({
+          method: 'PUT',
+          url: '/api/files/model/spec.c4',
+          payload: { version: opened.version },
+        }),
+        app.inject({ method: 'PUT', url: '/api/files/model/spec.c4' }),
+        // Синтаксически битый JSON отклоняется content-type parser'ом Fastify
+        // ещё до хендлера — должен превратиться в общий 400 envelope.
+        app.inject({
+          method: 'PUT',
+          url: '/api/files/model/spec.c4',
+          payload: '{invalid json',
+          headers: { 'content-type': 'application/json' },
+        }),
+      ])
+
+      for (const response of [noVersion, shortVersion, noContent, emptyBody, badJson]) {
+        expect(response.statusCode).toBe(400)
+        expect(response.json().error.code).toBe('VALIDATION_ERROR')
+      }
+      // Исходное содержимое не тронуто.
+      await expect(readFile(path.join(workspaceRoot, 'model/spec.c4'), 'utf8')).resolves.toBe(
+        'model {}\n',
+      )
     } finally {
       await app.close()
     }

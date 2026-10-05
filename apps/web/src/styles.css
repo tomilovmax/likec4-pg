@@ -244,6 +244,23 @@ button:hover {
   white-space: nowrap;
 }
 
+/* REQ-07: статусы сохранения buffer’а рядом с метаданными файла. */
+.opened-file__saving {
+  color: #9fb0cd;
+  font-size: 0.72rem;
+  white-space: nowrap;
+}
+
+.opened-file__save-error {
+  border-radius: 0.25rem;
+  background: #3d272c;
+  padding: 0.05rem 0.35rem;
+  color: #ffbab5;
+  font-size: 0.72rem;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
 .code-editor-host {
   flex: 1;
   min-height: 16rem;

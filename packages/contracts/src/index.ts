@@ -7,6 +7,8 @@ export const apiErrorCodeSchema = z.enum([
   'INVALID_PATH',
   'PATH_OUTSIDE_WORKSPACE',
   'UNSUPPORTED_FILE',
+  // REQ-07: version token сохранения не совпал с текущим содержимым файла.
+  'CONFLICT',
 ])
 
 export const apiErrorSchema = z.object({
@@ -56,6 +58,20 @@ export const fileContentResponseSchema = z.object({
   content: z.string(),
   version: z.string().length(64),
 })
+
+// REQ-07: атомарное сохранение с проверкой version token. client →
+// PUT /api/files/* { content, version }; успешный ответ — FileContentResponse
+// с новой версией (тот же контракт, что у чтения).
+export const saveFileRequestSchema = z.object({
+  content: z.string(),
+  version: z.string().length(64),
+})
+export type SaveFileRequest = z.infer<typeof saveFileRequestSchema>
+
+// Успешный ответ сохранения — то же представление, что у чтения: normalized
+// path, язык, literal content и новая version token.
+export const saveFileResponseSchema = fileContentResponseSchema
+export type SaveFileResponse = FileContentResponse
 
 export type FileContentResponse = z.infer<typeof fileContentResponseSchema>
 

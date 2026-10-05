@@ -759,6 +759,152 @@ describe('REQ-15 diagram preview', () => {
   })
 })
 
+describe('REQ-07 save buffer', () => {
+  const savedSpecification = 'specification {\n  demo = "λ"\n}'
+  const editedSpecification = 'specification {\n  demo = "edited"\n}'
+  const savedVersion = 'c'.repeat(64)
+  const newVersion = 'f'.repeat(64)
+
+  interface SaveCall {
+    path: string
+    body: { content: string; version: string }
+  }
+
+  function stubApiWithSave(saveHandler: (call: SaveCall) => Promise<Response>) {
+    const saveCalls: SaveCall[] = []
+    const fetchMock = vi.fn((path: string, init?: RequestInit): Promise<Response> => {
+      if (path === '/api/files') {
+        return Promise.resolve(jsonResponse(nestedFilesResponse))
+      }
+      if (path === '/api/workspace') {
+        return Promise.resolve(
+          jsonResponse({ status: 'ready', displayName: 'architecture' }),
+        )
+      }
+      if (path === '/api/diagram') {
+        return Promise.resolve(jsonResponse({ status: 'empty', reason: 'NO_VIEWS' }))
+      }
+      if (path === '/api/files/model/specification.c4' && init?.method !== 'PUT') {
+        return Promise.resolve(
+          jsonResponse({
+            path: 'model/specification.c4',
+            name: 'specification.c4',
+            language: 'likec4',
+            content: savedSpecification,
+            version: savedVersion,
+          }),
+        )
+      }
+      if (path === '/api/files/model/specification.c4' && init?.method === 'PUT') {
+        const call: SaveCall = {
+          path,
+          body: JSON.parse(String(init.body)) as { content: string; version: string },
+        }
+        saveCalls.push(call)
+        return saveHandler(call)
+      }
+      return Promise.reject(new Error(`unexpected fetch: ${path}`))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    return { fetchMock, saveCalls }
+  }
+
+  async function openAndEditSpecification() {
+    render(<App />)
+
+    const files = screen.getByRole('region', { name: 'Files' })
+    const editor = screen.getByRole('region', { name: 'Code Editor' })
+
+    const entry = await waitFor(() =>
+      within(files).getByRole('button', { name: /specification\.c4/ }),
+    )
+    fireEvent.click(entry)
+
+    const textarea = await waitFor(() => editorTextarea(editor))
+    fireEvent.change(textarea, { target: { value: editedSpecification } })
+    await waitFor(() => {
+      expect(within(editor).getByText(/не сохранён/)).toBeTruthy()
+    })
+    return { files, editor }
+  }
+
+  function pressSave() {
+    fireEvent.keyDown(window, { key: 's', ctrlKey: true })
+  }
+
+  it('saves the dirty buffer on Ctrl+S and clears the dirty state', async () => {
+    const { saveCalls } = stubApiWithSave(() =>
+      Promise.resolve(
+        jsonResponse({
+          path: 'model/specification.c4',
+          name: 'specification.c4',
+          language: 'likec4',
+          content: editedSpecification,
+          version: newVersion,
+        }),
+      ),
+    )
+
+    const { editor } = await openAndEditSpecification()
+    pressSave()
+
+    await waitFor(() => {
+      expect(within(editor).queryByText(/не сохранён/)).toBeNull()
+    })
+    expect(saveCalls).toEqual([
+      {
+        path: '/api/files/model/specification.c4',
+        body: { content: editedSpecification, version: savedVersion },
+      },
+    ])
+    // Показана новая сохранённая версия.
+    expect(within(editor).getByText(/версия f{12}/)).toBeTruthy()
+  })
+
+  it('keeps the buffer and dirty state when the save conflicts', async () => {
+    stubApiWithSave(() =>
+      Promise.resolve(
+        jsonResponse(
+          {
+            error: { code: 'CONFLICT', message: 'File "specification.c4" changed on disk since it was opened.' },
+          },
+          409,
+        ),
+      ),
+    )
+
+    const { editor } = await openAndEditSpecification()
+    pressSave()
+
+    await waitFor(() => {
+      expect(within(editor).getByRole('alert').textContent).toContain('конфликт записи')
+    })
+    // Buffer и dirty state не потеряны.
+    expect(readFakeModel('model/specification.c4')).toBe(editedSpecification)
+    expect(within(editor).getByText(/не сохранён/)).toBeTruthy()
+  })
+
+  it('keeps the buffer and shows an error when the save fails', async () => {
+    stubApiWithSave(() =>
+      Promise.resolve(
+        jsonResponse(
+          { error: { code: 'INTERNAL_ERROR', message: 'Save request failed' } },
+          500,
+        ),
+      ),
+    )
+
+    const { editor } = await openAndEditSpecification()
+    pressSave()
+
+    await waitFor(() => {
+      expect(within(editor).getByRole('alert').textContent).toContain('Save request failed')
+    })
+    expect(readFakeModel('model/specification.c4')).toBe(editedSpecification)
+    expect(within(editor).getByText(/не сохранён/)).toBeTruthy()
+  })
+})
+
 describe('REQ-16 view selector', () => {
   const modelViews = { index: {}, overview: {}, 'dev-extra': {} }
 
