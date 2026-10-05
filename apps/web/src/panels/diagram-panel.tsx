@@ -1,7 +1,11 @@
-import { lazy, Suspense, useCallback, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useState } from 'react'
 
 import { api } from '../api/client'
 import { DiagramErrorBoundary } from '../diagram/diagram-error-boundary'
+import {
+  readSelectedViewFromLocation,
+  writeSelectedViewToLocation,
+} from '../diagram/view-selection'
 import { Panel } from '../components/panel'
 import { ResourceError } from '../components/resource-error'
 import { useResource } from '../hooks/use-resource'
@@ -13,9 +17,14 @@ const LikeC4DiagramView = lazy(() => import('../diagram/likec4-diagram-view'))
 export function DiagramPanel() {
   const loadDiagram = useCallback(() => api.getDiagram(), [])
   const { state, reload } = useResource(loadDiagram)
-  // Внутренняя навигация preview между views (клик по элементу с navigateTo).
-  // Выбор из списка views — REQ-16; до него показываем default view сервера.
-  const [selectedViewId, setSelectedViewId] = useState<string | null>(null)
+  // REQ-16: view, выбранная пользователем — из списка views модели либо
+  // внутренней навигации preview. Восстанавливается из URL hash (#view=…),
+  // поэтому selection переживает refresh; null — показываем default сервера.
+  const [selectedViewId, setSelectedViewId] = useState<string | null>(() =>
+    readSelectedViewFromLocation(),
+  )
+  // REQ-16 fallback: id view, исчезнувшей из модели после загрузки данных.
+  const [missingViewNotice, setMissingViewNotice] = useState<string | null>(null)
   // Remount renderer'а кнопкой «Повторить» в fallback ErrorBoundary.
   const [rendererAttempt, setRendererAttempt] = useState(0)
 
@@ -24,6 +33,31 @@ export function DiagramPanel() {
     ready !== null && selectedViewId !== null && ready.views.some((view) => view.id === selectedViewId)
       ? selectedViewId
       : (ready?.defaultViewId ?? null)
+
+  // URL всегда отражает показанную view — refresh страницы восстанавливает
+  // selection, включая безопасный fallback после исчезновения view.
+  useEffect(() => {
+    if (viewId !== null) {
+      writeSelectedViewToLocation(viewId)
+    }
+  }, [viewId])
+
+  // REQ-16 fallback: после загрузки новой модели выбранной view в списке нет —
+  // показываем серверский default с понятным сообщением, а не пустую панель.
+  useEffect(() => {
+    if (ready === null || selectedViewId === null) {
+      return
+    }
+    if (!ready.views.some((view) => view.id === selectedViewId)) {
+      setMissingViewNotice(selectedViewId)
+      setSelectedViewId(null)
+    }
+  }, [ready, selectedViewId])
+
+  const selectView = useCallback((nextViewId: string) => {
+    setSelectedViewId(nextViewId)
+    setMissingViewNotice(null)
+  }, [])
 
   return (
     <Panel title="Diagram">
@@ -51,26 +85,53 @@ export function DiagramPanel() {
         </div>
       )}
       {ready !== null && viewId !== null && (
-        <DiagramErrorBoundary
-          key={rendererAttempt}
-          onRetry={() => {
-            setRendererAttempt((attempt) => attempt + 1)
-          }}
-        >
-          <Suspense fallback={<p className="resource-state">Загружаем LikeC4 renderer…</p>}>
-            <div className="diagram-host">
-              <LikeC4DiagramView
-                model={ready.model}
-                viewId={viewId}
-                onNavigateTo={(nextViewId) => {
-                  if (ready.views.some((view) => view.id === nextViewId)) {
-                    setSelectedViewId(nextViewId)
-                  }
-                }}
-              />
-            </div>
-          </Suspense>
-        </DiagramErrorBoundary>
+        <>
+          <div className="diagram-toolbar">
+            <label className="diagram-toolbar__label" htmlFor="diagram-view">
+              View
+            </label>
+            <select
+              className="diagram-toolbar__select"
+              id="diagram-view"
+              value={viewId}
+              onChange={(event) => {
+                selectView(event.target.value)
+              }}
+            >
+              {ready.views.map((view) => (
+                <option key={view.id} value={view.id}>
+                  {view.title ?? view.id}
+                </option>
+              ))}
+            </select>
+          </div>
+          {missingViewNotice !== null && (
+            <p className="diagram-view-notice" role="status">
+              View «{missingViewNotice}» больше не существует в модели — показана view «
+              {ready.views.find((view) => view.id === viewId)?.title ?? viewId}».
+            </p>
+          )}
+          <DiagramErrorBoundary
+            key={rendererAttempt}
+            onRetry={() => {
+              setRendererAttempt((attempt) => attempt + 1)
+            }}
+          >
+            <Suspense fallback={<p className="resource-state">Загружаем LikeC4 renderer…</p>}>
+              <div className="diagram-host">
+                <LikeC4DiagramView
+                  model={ready.model}
+                  viewId={viewId}
+                  onNavigateTo={(nextViewId) => {
+                    if (ready.views.some((view) => view.id === nextViewId)) {
+                      selectView(nextViewId)
+                    }
+                  }}
+                />
+              </div>
+            </Suspense>
+          </DiagramErrorBoundary>
+        </>
       )}
     </Panel>
   )

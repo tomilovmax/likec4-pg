@@ -66,6 +66,8 @@ afterEach(() => {
   resetLanguageRuntimeForTest()
   likeC4RendererMock.failRenderer = false
   likeC4RendererMock.createdModels.length = 0
+  // REQ-16: selection view живёт в URL hash — изолируем тесты друг от друга.
+  window.history.replaceState(null, '', window.location.pathname)
 })
 
 describe('REQ-01 desktop shell', () => {
@@ -754,5 +756,195 @@ describe('REQ-15 diagram preview', () => {
     expect(
       vi.mocked(fetch).mock.calls.filter(([path]) => path === '/api/diagram'),
     ).toHaveLength(1)
+  })
+})
+
+describe('REQ-16 view selector', () => {
+  const modelViews = { index: {}, overview: {}, 'dev-extra': {} }
+
+  function readyDiagramResponse(views: Array<{ id: string; title: string | null }>) {
+    return {
+      status: 'ready',
+      model: { _stage: 'layouted', projectId: 'fixture', views: modelViews },
+      views,
+      defaultViewId: views.find((view) => view.id === 'index')?.id ?? views[0]!.id,
+    }
+  }
+
+  const fullViews = [
+    { id: 'dev-extra', title: 'Dev and Extra' },
+    { id: 'index', title: 'Landscape view' },
+    { id: 'overview', title: 'Overview' },
+  ]
+
+  function stubApiWithDiagram(diagram: () => Promise<Response>) {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((path: string): Promise<Response> => {
+        if (path === '/api/files') {
+          return Promise.resolve(jsonResponse(nestedFilesResponse))
+        }
+        if (path === '/api/workspace') {
+          return Promise.resolve(
+            jsonResponse({ status: 'ready', displayName: 'architecture' }),
+          )
+        }
+        if (path === '/api/diagram') {
+          return diagram()
+        }
+        return Promise.reject(new Error(`unexpected fetch: ${path}`))
+      }),
+    )
+  }
+
+  /** Селектор views панели Diagram. */
+  function viewSelector(diagram: HTMLElement): HTMLSelectElement {
+    return within(diagram).getByLabelText('View') as HTMLSelectElement
+  }
+
+  it('lists every view found in the model with readable names', async () => {
+    stubApiWithDiagram(() =>
+      Promise.resolve(jsonResponse(readyDiagramResponse(fullViews))),
+    )
+
+    render(<App />)
+
+    const diagram = screen.getByRole('region', { name: 'Diagram' })
+    const select = await waitFor(() => viewSelector(diagram))
+
+    // Список строится из ответа модели, а не из имени файла или константы.
+    expect([...select.options].map((option) => option.textContent)).toEqual([
+      'Dev and Extra',
+      'Landscape view',
+      'Overview',
+    ])
+    // Без выбора пользователя показывается default сервера (правило REQ-15).
+    expect(select.value).toBe('index')
+    expect(
+      within(diagram).getByTestId('react-likec4').dataset.viewId,
+    ).toBe('index')
+  })
+
+  it('switches the preview between views without a new diagram request', async () => {
+    stubApiWithDiagram(() =>
+      Promise.resolve(jsonResponse(readyDiagramResponse(fullViews))),
+    )
+
+    render(<App />)
+
+    const diagram = screen.getByRole('region', { name: 'Diagram' })
+    await waitFor(() => viewSelector(diagram))
+
+    fireEvent.change(viewSelector(diagram), { target: { value: 'overview' } })
+    await waitFor(() => {
+      expect(within(diagram).getByTestId('react-likec4').dataset.viewId).toBe(
+        'overview',
+      )
+    })
+    expect(viewSelector(diagram).value).toBe('overview')
+    expect(window.location.hash).toBe('#view=overview')
+
+    // Вторая view — переключение минимум двух views за один загруженный model.
+    fireEvent.change(viewSelector(diagram), { target: { value: 'dev-extra' } })
+    await waitFor(() => {
+      expect(within(diagram).getByTestId('react-likec4').dataset.viewId).toBe(
+        'dev-extra',
+      )
+    })
+    expect(
+      vi.mocked(fetch).mock.calls.filter(([path]) => path === '/api/diagram'),
+    ).toHaveLength(1)
+  })
+
+  it('reflects internal preview navigation in the selector', async () => {
+    stubApiWithDiagram(() =>
+      Promise.resolve(jsonResponse(readyDiagramResponse(fullViews))),
+    )
+
+    render(<App />)
+
+    const diagram = screen.getByRole('region', { name: 'Diagram' })
+    await waitFor(() => within(diagram).getByTestId('react-likec4'))
+
+    fireEvent.click(within(diagram).getByRole('button', { name: 'navigate' }))
+
+    await waitFor(() => {
+      expect(viewSelector(diagram).value).toBe('dev-extra')
+    })
+    expect(window.location.hash).toBe('#view=dev-extra')
+  })
+
+  it('keeps the selection across a page refresh while the view exists', async () => {
+    stubApiWithDiagram(() =>
+      Promise.resolve(jsonResponse(readyDiagramResponse(fullViews))),
+    )
+
+    const first = render(<App />)
+    const diagram = screen.getByRole('region', { name: 'Diagram' })
+    await waitFor(() => viewSelector(diagram))
+    fireEvent.change(viewSelector(diagram), { target: { value: 'overview' } })
+    await waitFor(() => {
+      expect(within(diagram).getByTestId('react-likec4').dataset.viewId).toBe(
+        'overview',
+      )
+    })
+
+    // Page refresh: новое монтирование читает selection из URL hash.
+    first.unmount()
+    render(<App />)
+
+    const refreshedDiagram = screen.getByRole('region', { name: 'Diagram' })
+    const renderer = await waitFor(() =>
+      within(refreshedDiagram).getByTestId('react-likec4'),
+    )
+    expect(renderer.dataset.viewId).toBe('overview')
+    await waitFor(() => {
+      expect(viewSelector(refreshedDiagram).value).toBe('overview')
+    })
+  })
+
+  it('falls back to the default view with a notice when the selected view disappears', async () => {
+    let diagramRequests = 0
+    stubApiWithDiagram(() => {
+      diagramRequests += 1
+      // Refresh приносит модель без view overview.
+      return Promise.resolve(
+        jsonResponse(
+          diagramRequests === 1
+            ? readyDiagramResponse(fullViews)
+            : readyDiagramResponse(fullViews.filter((view) => view.id !== 'overview')),
+        ),
+      )
+    })
+
+    const first = render(<App />)
+    const diagram = screen.getByRole('region', { name: 'Diagram' })
+    await waitFor(() => viewSelector(diagram))
+    fireEvent.change(viewSelector(diagram), { target: { value: 'overview' } })
+    await waitFor(() => {
+      expect(window.location.hash).toBe('#view=overview')
+    })
+
+    first.unmount()
+    render(<App />)
+
+    const refreshedDiagram = screen.getByRole('region', { name: 'Diagram' })
+    const renderer = await waitFor(() =>
+      within(refreshedDiagram).getByTestId('react-likec4'),
+    )
+    // Безопасный fallback: серверский default вместо пустой панели.
+    expect(renderer.dataset.viewId).toBe('index')
+    expect(viewSelector(refreshedDiagram).value).toBe('index')
+    expect(
+      [...viewSelector(refreshedDiagram).options].map((option) => option.value),
+    ).toEqual(['dev-extra', 'index'])
+    await waitFor(() => {
+      expect(window.location.hash).toBe('#view=index')
+    })
+    await waitFor(() => {
+      const notice = within(refreshedDiagram).getByRole('status')
+      expect(notice.textContent).toContain('overview')
+      expect(notice.textContent).toContain('Landscape view')
+    })
   })
 })

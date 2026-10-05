@@ -330,7 +330,7 @@ model {
     -> req_invalid_dsl 'Preview сообщает о повреждённой модели'
   }
 
-  req_view_selector = requirement_open {
+  req_view_selector = requirement_met {
     title 'REQ-16 · Выбор диаграммы из списка views'
     summary 'Пользователь выбирает любую доступную LikeC4 view, а preview показывает именно её.'
     description '''
@@ -338,11 +338,11 @@ model {
       названия и синхронизирует выбранную view с Diagram panel.
 
       Критерии приёмки:
-      - [ ] UI показывает все views, найденные в model, без захардкоженного имени файла
-      - [ ] выбор другой view обновляет diagram preview
-      - [ ] после refresh сохраняется selection существующей view
-      - [ ] при исчезновении выбранной view применяется понятный безопасный fallback
-      - [ ] integration test переключает минимум две view
+      - [x] UI показывает все views, найденные в model, без захардкоженного имени файла
+      - [x] выбор другой view обновляет diagram preview
+      - [x] после refresh сохраняется selection существующей view
+      - [x] при исчезновении выбранной view применяется понятный безопасный fallback
+      - [x] integration test переключает минимум две view
     '''
   }
 
