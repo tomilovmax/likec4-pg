@@ -1,6 +1,6 @@
 # LikeC4 Web IDE
 
-Self-hosted browser IDE для одного LikeC4 workspace. Реализованы REQ-01 (трёхпанельный app shell: Files, Code Editor, Diagram на одном URL), REQ-02 (настроенный и проверенный workspace), REQ-03 (изолированные файловые пути workspace), REQ-04 (навигация по разрешённым файлам workspace), REQ-05 (открытие исходного текста файла), REQ-06 (редактирование и изолированный buffer) и REQ-14 (загрузка полного multi-file LikeC4 проекта) и REQ-19 (подсветка LikeC4 и diagnostics официального browser language server).
+Self-hosted browser IDE для одного LikeC4 workspace. Реализованы REQ-01 (трёхпанельный app shell: Files, Code Editor, Diagram на одном URL), REQ-02 (настроенный и проверенный workspace), REQ-03 (изолированные файловые пути workspace), REQ-04 (навигация по разрешённым файлам workspace), REQ-05 (открытие исходного текста файла), REQ-06 (редактирование и изолированный buffer), REQ-14 (загрузка полного multi-file LikeC4 проекта), REQ-15 (интерактивный preview существующей LikeC4 view) и REQ-19 (подсветка LikeC4 и diagnostics официального browser language server).
 
 Browser получает данные только через backend HTTP API. Он не получает прямой доступ к файловой системе хоста и не может выбрать другой workspace: путь задаёт только оператор на сервере.
 
@@ -67,9 +67,22 @@ curl http://localhost:3000/api/project
 # {"status":"ok","views":[{"id":"dev-extra","title":"Dev и Extra"},…],"elements":[{"id":"core","kind":"subsystem","title":"Core"},…]}
 ```
 
+Получить layouted-модель для diagram preview (готовую к рендеру модель официального renderer'а, список views и default view; при ошибках парсинга — `status:"invalid"` с диагностиками, без модели; пустой workspace — `status:"empty"`):
+
+```bash
+curl http://localhost:3000/api/diagram
+# {"status":"ready","model":{"_stage":"layouted",…},"views":[…],"defaultViewId":"index"}
+```
+
 ## Текущее состояние
 
-REQ-01 предоставляет трёхпанельный app shell и независимые loading/empty/error состояния панелей. REQ-02 добавляет server-side конфигурацию: сервер стартует только с существующим читаемым каталогом из `LIKEC4_WORKSPACE` и использует его как единственный filesystem root. REQ-03 добавляет единый path guard: все файловые операции принимают только относительные пути и физически не выходят за пределы workspace — `..`, абсолютные пути, URL-encoded traversal и symlink наружу отклоняются с 4xx, не раскрывая путей хоста. REQ-04 наполняет панель Files: `GET /api/files` возвращает вложенное дерево только из разрешённых LikeC4-файлов (`.c4`, `.likec4` и конфигурационные файлы LikeC4; скрытые записи, бинарные и нерелевантные файлы, а также ветки без LikeC4-файлов не попадают в дерево). REQ-05 открывает выбранный файл: `GET /api/files/<относительный путь>` отдаёт его буквальный UTF-8 текст и version token (sha256 содержимого, дублируется `ETag`) для будущего optimistic save; бинарные и запрещённые типы не выдаются как редактируемый текст (`UNSUPPORTED_FILE` 415), а Code Editor показывает текст без format-on-load. REQ-06 добавляет редактирование: Monaco-редактор держит изолированные буферы открытых файлов и отмечает несохранённые изменения. REQ-14 загружает полный multi-file проект: `GET /api/project` собирает весь workspace (config, specification, model, views, включая вложенные каталоги) в одну LikeC4 model официальным API `LikeC4.fromWorkspace()` пакета `likec4` 1.59.4 и отдаёт списки views и элементов; при ошибках парсинга — `status:"invalid"` с диагностиками без путей хоста. `GET /api/diagram` пока возвращает безопасный placeholder-ответ: diagram preview будет добавлен отдельным требованием (REQ-15).
+REQ-01 предоставляет трёхпанельный app shell и независимые loading/empty/error состояния панелей. REQ-02 добавляет server-side конфигурацию: сервер стартует только с существующим читаемым каталогом из `LIKEC4_WORKSPACE` и использует его как единственный filesystem root. REQ-03 добавляет единый path guard: все файловые операции принимают только относительные пути и физически не выходят за пределы workspace — `..`, абсолютные пути, URL-encoded traversal и symlink наружу отклоняются с 4xx, не раскрывая путей хоста. REQ-04 наполняет панель Files: `GET /api/files` возвращает вложенное дерево только из разрешённых LikeC4-файлов (`.c4`, `.likec4` и конфигурационные файлы LikeC4; скрытые записи, бинарные и нерелевантные файлы, а также ветки без LikeC4-файлов не попадают в дерево). REQ-05 открывает выбранный файл: `GET /api/files/<относительный путь>` отдаёт его буквальный UTF-8 текст и version token (sha256 содержимого, дублируется `ETag`) для будущего optimistic save; бинарные и запрещённые типы не выдаются как редактируемый текст (`UNSUPPORTED_FILE` 415), а Code Editor показывает текст без format-on-load. REQ-06 добавляет редактирование: Monaco-редактор держит изолированные буферы открытых файлов и отмечает несохранённые изменения. REQ-14 загружает полный multi-file проект: `GET /api/project` собирает весь workspace (config, specification, model, views, включая вложенные каталоги) в одну LikeC4 model официальным API `LikeC4.fromWorkspace()` пакета `likec4` 1.59.4 и отдаёт списки views и элементов; при ошибках парсинга — `status:"invalid"` с диагностиками без путей хоста. REQ-15 рендерит интерактивную диаграмму в панели Diagram (см. ниже).
+
+### Diagram preview (REQ-15)
+
+Панель Diagram показывает интерактивную LikeC4-диаграмму через официальный integration path — субпаф `likec4/react` пакета `likec4` **1.59.4** (опубликованный бандл `@likec4/diagram` того же релиза; отдельный пакет не устанавливается). Backend отдаёт `GET /api/diagram`: layouted-модель всего multi-file workspace (`layoutedModel().$data` — чистый JSON), отсортированный список views и `defaultViewId` (implicit `index`, иначе первая по алфавиту; выбор из списка — REQ-16). Frontend оживляет модель официальной фабрикой `LikeC4Model.create()` (`@likec4/core` 1.59.4) и рендерит `ReactLikeC4` в `LikeC4ModelProvider`: pan/zoom, клики по элементам, навигация между views по internal links — всё из официальных компонентов, самописного renderer'а нет.
+
+Повреждённый DSL не отдаёт половинную модель: ответ `status:"invalid"` с диагностиками, панель показывает отдельное состояние и не выдаёт устаревшую диаграмму за актуальную. Ошибка самого renderer'а изолируется ErrorBoundary с кнопкой «Повторить» и не ломает Files и Code Editor. Модель и renderer грузятся без кэша и lazy-чанком (~2.3 МБ) соответственно; обновление preview после сохранения — предмет REQ-17.
 
 ### LikeC4 language integration (REQ-19)
 
@@ -95,4 +108,4 @@ npm test
 
 ## Upstream LikeC4
 
-Архитектурные решения и перечень официальных компонентов LikeC4, которые будут переиспользованы, зафиксированы в [docs/architecture.md](docs/architecture.md). В частности, будущий diagram использует публичный `@likec4/diagram`, а официальные Playground patterns задают ориентир для editor/LSP integration. Приложение не реализует собственные LikeC4 parser, renderer или syntax checker.
+Архитектурные решения и перечень официальных компонентов LikeC4, которые переиспользуются, зафиксированы в [docs/architecture.md](docs/architecture.md). В частности, diagram preview использует публичные компоненты `@likec4/diagram` через субпаф `likec4/react`, а официальные Playground patterns задают ориентир для editor/LSP integration. Приложение не реализует собственные LikeC4 parser, renderer или syntax checker.

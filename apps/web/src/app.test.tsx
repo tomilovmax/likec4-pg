@@ -15,6 +15,43 @@ import {
 vi.mock('./editor/monaco-editor', async () => import('./editor/monaco-editor.fake'))
 vi.mock('./editor/likec4-language-runtime', async () => import('./editor/likec4-language-runtime.fake'))
 
+// REQ-15: границы интеграции с официальным renderer'ом likec4/react. Реальный
+// бандл (react-flow, mantine, ~2.5 МБ) в jsdom не поднимается; контракт
+// create($data) ↔ ReactLikeC4(viewId) проверяется серверным round-trip-тестом.
+const likeC4RendererMock = vi.hoisted(() => ({
+  failRenderer: false,
+  createdModels: [] as Array<{ projectId?: string }>,
+}))
+vi.mock('likec4/react', () => ({
+  LikeC4ModelProvider: ({ children }: { children: React.ReactNode }) => children,
+  ReactLikeC4: ({
+    viewId,
+    onNavigateTo,
+  }: {
+    viewId: string
+    onNavigateTo: (viewId: string) => void
+  }) => {
+    if (likeC4RendererMock.failRenderer) {
+      throw new Error('Renderer crashed')
+    }
+    return (
+      <div data-testid="react-likec4" data-view-id={viewId}>
+        <button type="button" onClick={() => onNavigateTo('dev-extra')}>
+          navigate
+        </button>
+      </div>
+    )
+  },
+}))
+vi.mock('@likec4/core/model', () => ({
+  LikeC4Model: {
+    create: (data: unknown) => {
+      likeC4RendererMock.createdModels.push(data as { projectId?: string })
+      return { $data: data, views: () => [] }
+    },
+  },
+}))
+
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
@@ -27,6 +64,8 @@ afterEach(() => {
   vi.unstubAllGlobals()
   resetForTest()
   resetLanguageRuntimeForTest()
+  likeC4RendererMock.failRenderer = false
+  likeC4RendererMock.createdModels.length = 0
 })
 
 describe('REQ-01 desktop shell', () => {
@@ -43,7 +82,7 @@ describe('REQ-01 desktop shell', () => {
           return Promise.resolve(jsonResponse({ items: [] }))
         }
         return Promise.resolve(
-          jsonResponse({ status: 'empty', reason: 'NO_WORKSPACE_VIEW' }),
+          jsonResponse({ status: 'empty', reason: 'NO_VIEWS' }),
         )
       }),
     )
@@ -89,7 +128,7 @@ describe('REQ-01 desktop shell', () => {
         )
       }
       return Promise.resolve(
-        jsonResponse({ status: 'empty', reason: 'NO_WORKSPACE_VIEW' }),
+        jsonResponse({ status: 'empty', reason: 'NO_VIEWS' }),
       )
     })
     vi.stubGlobal('fetch', fetchMock)
@@ -173,7 +212,7 @@ describe('REQ-04 files panel', () => {
 
   it('renders nested directories and visually distinct allowed files', async () => {
     stubApi(() =>
-      Promise.resolve(jsonResponse({ status: 'empty', reason: 'NO_WORKSPACE_VIEW' })),
+      Promise.resolve(jsonResponse({ status: 'empty', reason: 'NO_VIEWS' })),
     )
 
     render(<App />)
@@ -255,7 +294,7 @@ describe('REQ-05 open file', () => {
         }
         if (path === '/api/diagram') {
           return Promise.resolve(
-            jsonResponse({ status: 'empty', reason: 'NO_WORKSPACE_VIEW' }),
+            jsonResponse({ status: 'empty', reason: 'NO_VIEWS' }),
           )
         }
         if (path === '/api/files/model/specification.c4') {
@@ -353,7 +392,7 @@ describe('REQ-06 editor buffer', () => {
   const editedSpecification = 'specification {\n  demo = "edited"\n}'
 
   function stubApiWithSources(diagram: () => Promise<Response> = () =>
-    Promise.resolve(jsonResponse({ status: 'empty', reason: 'NO_WORKSPACE_VIEW' })),
+    Promise.resolve(jsonResponse({ status: 'empty', reason: 'NO_VIEWS' })),
   ) {
     const fetchMock = vi.fn((path: string): Promise<Response> => {
       if (path === '/api/files') {
@@ -550,5 +589,170 @@ describe('REQ-06 editor buffer', () => {
         content: editedSpecification,
       })
     })
+  })
+})
+
+describe('REQ-15 diagram preview', () => {
+  const readyDiagramResponse = {
+    status: 'ready',
+    model: {
+      _stage: 'layouted',
+      projectId: 'fixture',
+      views: { index: {}, overview: {}, 'dev-extra': {} },
+    },
+    views: [
+      { id: 'dev-extra', title: 'Dev and Extra' },
+      { id: 'index', title: 'Landscape view' },
+      { id: 'overview', title: 'Overview' },
+    ],
+    defaultViewId: 'index',
+  }
+
+  function stubApiWithDiagram(diagram: () => Promise<Response>) {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((path: string): Promise<Response> => {
+        if (path === '/api/files') {
+          return Promise.resolve(jsonResponse(nestedFilesResponse))
+        }
+        if (path === '/api/workspace') {
+          return Promise.resolve(
+            jsonResponse({ status: 'ready', displayName: 'architecture' }),
+          )
+        }
+        if (path === '/api/diagram') {
+          return diagram()
+        }
+        if (path === '/api/files/model/specification.c4') {
+          return Promise.resolve(
+            jsonResponse({
+              path: 'model/specification.c4',
+              name: 'specification.c4',
+              language: 'likec4',
+              content: 'specification {\n  demo = "λ"\n}',
+              version: 'c'.repeat(64),
+            }),
+          )
+        }
+        return Promise.reject(new Error(`unexpected fetch: ${path}`))
+      }),
+    )
+  }
+
+  async function openSpecificationFile() {
+    const files = screen.getByRole('region', { name: 'Files' })
+    const entry = await waitFor(() =>
+      within(files).getByRole('button', { name: /specification\.c4/ }),
+    )
+    fireEvent.click(entry)
+    return files
+  }
+
+  it('renders the interactive diagram for the default view', async () => {
+    stubApiWithDiagram(() => Promise.resolve(jsonResponse(readyDiagramResponse)))
+
+    render(<App />)
+
+    const diagram = screen.getByRole('region', { name: 'Diagram' })
+    const renderer = await waitFor(() =>
+      within(diagram).getByTestId('react-likec4'),
+    )
+
+    // Default view сервера (правило REQ-15; выбор из списка — REQ-16).
+    expect(renderer.dataset.viewId).toBe('index')
+    // Layouted-модель ответа дошла до официальной фабрики клиента как есть.
+    expect(likeC4RendererMock.createdModels).toEqual([
+      expect.objectContaining({ projectId: 'fixture' }),
+    ])
+  })
+
+  it('switches the shown view on internal navigation', async () => {
+    stubApiWithDiagram(() => Promise.resolve(jsonResponse(readyDiagramResponse)))
+
+    render(<App />)
+
+    const diagram = screen.getByRole('region', { name: 'Diagram' })
+    await waitFor(() => within(diagram).getByTestId('react-likec4'))
+
+    fireEvent.click(within(diagram).getByRole('button', { name: 'navigate' }))
+
+    await waitFor(() => {
+      expect(within(diagram).getByTestId('react-likec4').dataset.viewId).toBe(
+        'dev-extra',
+      )
+    })
+  })
+
+  it('shows a dedicated invalid state and keeps files and editor usable', async () => {
+    stubApiWithDiagram(() =>
+      Promise.resolve(
+        jsonResponse({
+          status: 'invalid',
+          diagnostics: [
+            {
+              message: 'Broken DSL: unexpected token',
+              path: 'broken.c4',
+              range: {
+                start: { line: 1, character: 0 },
+                end: { line: 1, character: 3 },
+              },
+            },
+          ],
+        }),
+      ),
+    )
+
+    render(<App />)
+
+    const diagram = screen.getByRole('region', { name: 'Diagram' })
+    await waitFor(() => {
+      const alert = within(diagram).getByRole('alert')
+      expect(alert.textContent).toContain('Модель проекта повреждена')
+      expect(alert.textContent).toContain('Broken DSL: unexpected token')
+    })
+    // Устаревшая диаграмма не показывается за актуальную.
+    expect(within(diagram).queryByTestId('react-likec4')).toBeNull()
+
+    const files = await openSpecificationFile()
+    const editor = screen.getByRole('region', { name: 'Code Editor' })
+    const textarea = await waitFor(() => editorTextarea(editor))
+    fireEvent.change(textarea, { target: { value: 'specification {\n  demo = "edited"\n}' } })
+    await waitFor(() => {
+      expect(within(editor).getByText(/не сохранён/)).toBeTruthy()
+    })
+    expect(files.querySelector('.file-tree__dirty')).toBeTruthy()
+  })
+
+  it('recovers when the renderer throws without breaking the editor', async () => {
+    stubApiWithDiagram(() => Promise.resolve(jsonResponse(readyDiagramResponse)))
+    likeC4RendererMock.failRenderer = true
+
+    render(<App />)
+
+    const diagram = screen.getByRole('region', { name: 'Diagram' })
+    const editor = screen.getByRole('region', { name: 'Code Editor' })
+    await waitFor(() => {
+      const alert = within(diagram).getByRole('alert')
+      expect(alert.textContent).toContain('Не удалось отрисовать диаграмму.')
+    })
+
+    // Renderer error изолирован: редактор продолжает работать.
+    const files = await openSpecificationFile()
+    const textarea = await waitFor(() => editorTextarea(editor))
+    fireEvent.change(textarea, { target: { value: 'specification {\n  demo = "edited"\n}' } })
+    await waitFor(() => {
+      expect(within(editor).getByText(/не сохранён/)).toBeTruthy()
+    })
+    expect(files.querySelector('.file-tree__dirty')).toBeTruthy()
+
+    // «Повторить» ремоунтит renderer без нового API-запроса.
+    likeC4RendererMock.failRenderer = false
+    fireEvent.click(within(diagram).getByRole('button', { name: 'Повторить' }))
+    await waitFor(() => {
+      expect(within(diagram).getByTestId('react-likec4')).toBeTruthy()
+    })
+    expect(
+      vi.mocked(fetch).mock.calls.filter(([path]) => path === '/api/diagram'),
+    ).toHaveLength(1)
   })
 })

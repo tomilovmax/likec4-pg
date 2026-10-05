@@ -59,13 +59,6 @@ export const fileContentResponseSchema = z.object({
 
 export type FileContentResponse = z.infer<typeof fileContentResponseSchema>
 
-export const diagramResponseSchema = z.object({
-  status: z.enum(['empty', 'ready']),
-  reason: z.string().optional(),
-})
-
-export type DiagramResponse = z.infer<typeof diagramResponseSchema>
-
 // REQ-14: полная multi-file модель проекта, загруженная официальным API LikeC4.
 // Ветка «ok» отдаётся только при пустом списке ошибок парсинга: половинную
 // модель клиент не получает (основа для REQ-15/18 — preview не выдаёт прежнюю
@@ -113,3 +106,47 @@ export type ProjectView = z.infer<typeof projectViewSchema>
 export type ProjectElement = z.infer<typeof projectElementSchema>
 export type ProjectDiagnostic = z.infer<typeof projectDiagnosticSchema>
 export type ProjectResponse = z.infer<typeof projectResponseSchema>
+
+// REQ-15: layouted-модель для официального renderer'а likec4/react (субпаф
+// likec4@1.59.4). Модель — opaque JSON ($data из layoutedModel()): структурную
+// целостность гарантирует пара LikeC4Model.create() + ReactLikeC4 на клиенте,
+// поэтому zod проверяет только конверт — зеркало полной схемы $data было бы
+// ручной привязкой к внутреннему формату upstream, ломающейся на любом
+// minor-обновлении.
+export type DiagramModelData = {
+  _stage: 'layouted'
+  projectId: string
+  views: Record<string, unknown>
+}
+
+export const diagramModelDataSchema = z.custom<DiagramModelData>((value) => {
+  if (typeof value !== 'object' || value === null) {
+    return false
+  }
+  const model = value as Record<string, unknown>
+  return (
+    model['_stage'] === 'layouted' &&
+    typeof model['projectId'] === 'string' &&
+    typeof model['views'] === 'object' &&
+    model['views'] !== null
+  )
+})
+
+export const diagramResponseSchema = z.discriminatedUnion('status', [
+  z.object({
+    status: z.literal('ready'),
+    model: diagramModelDataSchema,
+    views: z.array(projectViewSchema),
+    defaultViewId: z.string(),
+  }),
+  z.object({
+    status: z.literal('empty'),
+    reason: z.string().optional(),
+  }),
+  z.object({
+    status: z.literal('invalid'),
+    diagnostics: z.array(projectDiagnosticSchema),
+  }),
+])
+
+export type DiagramResponse = z.infer<typeof diagramResponseSchema>

@@ -12,6 +12,7 @@
   "dependencies": {
     "@fastify/static": "10.1.5",
     "@likec4-web-ide/contracts": "file:../../packages/contracts",
+    "@likec4/core": "1.59.4",
     "fastify": "5.12.5",
     "likec4": "1.59.4"
   },

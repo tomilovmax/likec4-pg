@@ -4,7 +4,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { projectResponseSchema } from '@likec4-web-ide/contracts'
+import { diagramResponseSchema, projectResponseSchema } from '@likec4-web-ide/contracts'
 
 import { LocalWorkspaceProvider } from './adapters/local-workspace.js'
 import { buildApp } from './app.js'
@@ -33,6 +33,27 @@ async function buildConfiguredApp() {
   return { app, workspaceRoot }
 }
 
+// Multi-file LikeC4-проект: config + specification + model + views, включая
+// вложенные каталоги и cross-file references (`extra` в model/extra.c4
+// ссылается на `dev` из model.c4; view dev-extra включает оба).
+async function buildAppWithMultiFileProject() {
+  const { app, workspaceRoot } = await buildConfiguredApp()
+  await mkdir(path.join(workspaceRoot, 'model'))
+  await mkdir(path.join(workspaceRoot, 'views'))
+  const files: Array<[string, string]> = [
+    ['likec4.config.json', '{"name":"fixture"}'],
+    ['specification.c4', 'specification {\n  element requirement\n  element subsystem\n}\n'],
+    ['model.c4', "model {\n  dev = requirement {\n    title 'Dev'\n  }\n  core = subsystem {\n    title 'Core'\n    -> dev 'реализует'\n  }\n}\n"],
+    ['model/extra.c4', "model {\n  extra = subsystem {\n    title 'Extra'\n    -> dev 'расширяет'\n  }\n}\n"],
+    ['views.c4', "views {\n  view overview {\n    title 'Overview'\n    include *\n  }\n}\n"],
+    ['views/extra.c4', "views {\n  view dev-extra {\n    title 'Dev and Extra'\n    include dev, extra\n  }\n}\n"],
+  ]
+  for (const [relativePath, content] of files) {
+    await writeFile(path.join(workspaceRoot, relativePath), content, 'utf8')
+  }
+  return { app, workspaceRoot }
+}
+
 describe('REQ-02 API', () => {
   it('exposes only safe workspace details', async () => {
     const { app, workspaceRoot } = await buildConfiguredApp()
@@ -51,7 +72,7 @@ describe('REQ-02 API', () => {
       })
       expect(diagram.json()).toEqual({
         status: 'empty',
-        reason: 'NO_WORKSPACE_VIEW',
+        reason: 'NO_VIEWS',
       })
       expect(JSON.stringify(workspace.json())).not.toContain(workspaceRoot)
       expect(JSON.stringify(workspace.json())).not.toContain(tmpdir())
@@ -325,27 +346,6 @@ describe('REQ-05 API', () => {
 })
 
 describe('REQ-14 API', () => {
-  // Multi-file LikeC4-проект: config + specification + model + views, включая
-  // вложенные каталоги и cross-file references (`extra` в model/extra.c4
-  // ссылается на `dev` из model.c4; view dev-extra включает оба).
-  async function buildAppWithMultiFileProject() {
-    const { app, workspaceRoot } = await buildConfiguredApp()
-    await mkdir(path.join(workspaceRoot, 'model'))
-    await mkdir(path.join(workspaceRoot, 'views'))
-    const files: Array<[string, string]> = [
-      ['likec4.config.json', '{"name":"fixture"}'],
-      ['specification.c4', 'specification {\n  element requirement\n  element subsystem\n}\n'],
-      ['model.c4', "model {\n  dev = requirement {\n    title 'Dev'\n  }\n  core = subsystem {\n    title 'Core'\n    -> dev 'реализует'\n  }\n}\n"],
-      ['model/extra.c4', "model {\n  extra = subsystem {\n    title 'Extra'\n    -> dev 'расширяет'\n  }\n}\n"],
-      ['views.c4', "views {\n  view overview {\n    title 'Overview'\n    include *\n  }\n}\n"],
-      ['views/extra.c4', "views {\n  view dev-extra {\n    title 'Dev and Extra'\n    include dev, extra\n  }\n}\n"],
-    ]
-    for (const [relativePath, content] of files) {
-      await writeFile(path.join(workspaceRoot, relativePath), content, 'utf8')
-    }
-    return { app, workspaceRoot }
-  }
-
   it('returns the whole multi-file model with workspace-relative data only', async () => {
     const { app } = await buildAppWithMultiFileProject()
 
@@ -417,6 +417,73 @@ describe('REQ-14 API', () => {
       expect(body.diagnostics.length).toBeGreaterThan(0)
       expect(JSON.stringify(body)).not.toContain(workspaceRoot)
       expect(JSON.stringify(body)).not.toContain(tmpdir())
+    } finally {
+      await app.close()
+    }
+  })
+})
+
+describe('REQ-15 API', () => {
+  it('returns a ready layouted diagram for the multi-file project', async () => {
+    const { app, workspaceRoot } = await buildAppWithMultiFileProject()
+
+    try {
+      const response = await app.inject({ method: 'GET', url: '/api/diagram' })
+
+      expect(response.statusCode).toBe(200)
+      expect(response.headers['cache-control']).toBe('no-store')
+      const body = diagramResponseSchema.parse(response.json())
+      expect(body.status).toBe('ready')
+      if (body.status !== 'ready') {
+        return
+      }
+      // Implicit view `index` добавляется версией LikeC4 1.59.4 и выбирается
+      // default view (правило REQ-15; выбор из списка — REQ-16).
+      expect(body.defaultViewId).toBe('index')
+      expect(body.views.map((view) => view.id)).toEqual(['dev-extra', 'index', 'overview'])
+      // Layouted-модель: view из вложенного каталога входит в данные renderer'а.
+      expect(body.model._stage).toBe('layouted')
+      expect(Object.keys(body.model.views)).toContain('dev-extra')
+      expect(JSON.stringify(body)).not.toContain(workspaceRoot)
+      expect(JSON.stringify(body)).not.toContain(tmpdir())
+    } finally {
+      await app.close()
+    }
+  })
+
+  it('reports an invalid diagram as 200 with diagnostics, not as a transport error', async () => {
+    const { app, workspaceRoot } = await buildConfiguredApp()
+    await writeFile(
+      path.join(workspaceRoot, 'broken.c4'),
+      'model {\n  missing = nowhere {\n}\n',
+      'utf8',
+    )
+
+    try {
+      const response = await app.inject({ method: 'GET', url: '/api/diagram' })
+
+      expect(response.statusCode).toBe(200)
+      const body = diagramResponseSchema.parse(response.json())
+      expect(body.status).toBe('invalid')
+      if (body.status !== 'invalid') {
+        return
+      }
+      expect(body.diagnostics.length).toBeGreaterThan(0)
+      expect(JSON.stringify(body)).not.toContain(workspaceRoot)
+      expect(JSON.stringify(body)).not.toContain(tmpdir())
+    } finally {
+      await app.close()
+    }
+  })
+
+  it('returns an empty state for a workspace without views', async () => {
+    const { app } = await buildConfiguredApp()
+
+    try {
+      const response = await app.inject({ method: 'GET', url: '/api/diagram' })
+
+      expect(response.statusCode).toBe(200)
+      expect(response.json()).toEqual({ status: 'empty', reason: 'NO_VIEWS' })
     } finally {
       await app.close()
     }

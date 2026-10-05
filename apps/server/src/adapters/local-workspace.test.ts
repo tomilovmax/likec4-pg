@@ -55,12 +55,12 @@ describe('REQ-02 local workspace provider', () => {
     })
   })
 
-  it('keeps the diagram resource on its placeholder shape', async () => {
+  it('returns an empty diagram state for a workspace without views', async () => {
     const provider = new LocalWorkspaceProvider(await temporaryWorkspace())
 
     expect(await provider.getDiagram()).toEqual({
       status: 'empty',
-      reason: 'NO_WORKSPACE_VIEW',
+      reason: 'NO_VIEWS',
     })
   })
 })

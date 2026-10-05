@@ -253,6 +253,17 @@ button:hover {
   background: #171a21;
 }
 
+/* REQ-15: renderer likec4/react (react-flow в ShadowRoot) требует контейнер
+   с определённой высотой: panel__content — flex-колонка, поэтому flex:1 и
+   min-height:0 дают явный размер вместо схлопывания в 0px. */
+.diagram-host {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
 /* Fake-реализация Monaco для jsdom-тестов кладёт textarea в тот же контейнер. */
 .code-editor-host > textarea {
   width: 100%;
