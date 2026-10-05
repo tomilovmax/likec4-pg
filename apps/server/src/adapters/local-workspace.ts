@@ -12,6 +12,7 @@ import type { WorkspacePort } from '../domain/workspace-port.js'
 import { WorkspacePathResolver } from '../workspace-paths.js'
 import { readWorkspaceFile } from '../workspace-file.js'
 import { listWorkspaceFiles } from '../workspace-tree.js'
+import { loadWorkspaceDiagram } from '../workspace-diagram.js'
 import { loadWorkspaceProject } from '../workspace-project.js'
 
 export class LocalWorkspaceProvider implements WorkspacePort {
@@ -23,6 +24,11 @@ export class LocalWorkspaceProvider implements WorkspacePort {
   // загрузку. Это не кэш: promise очищается по завершении, следующий запрос
   // парсит workspace заново (семантика reparse — REQ-17).
   private projectLoad: Promise<ProjectResponse> | undefined
+
+  // REQ-15: single-flight layouted-модели, отдельный от projectLoad — формы
+  // ответов разошлись, объединённый loader не делаем. Двойной парсинг при
+  // вызове обоих endpoints — задокументированное ограничение (docs/architecture.md).
+  private diagramLoad: Promise<DiagramResponse> | undefined
 
   constructor(private readonly workspaceRoot: string) {
     this.paths = new WorkspacePathResolver(workspaceRoot)
@@ -58,9 +64,16 @@ export class LocalWorkspaceProvider implements WorkspacePort {
     return this.projectLoad
   }
 
-  // Placeholder до REQ-15: diagram preview ещё не подключён.
+  // REQ-15: layouted-модель из доверенного realpath-корня REQ-03; клиентский
+  // путь не участвует — diagram всегда строится из всего workspace.
   async getDiagram(): Promise<DiagramResponse> {
-    return { status: 'empty', reason: 'NO_WORKSPACE_VIEW' }
+    this.diagramLoad ??= this.paths
+      .trustedRoot()
+      .then(loadWorkspaceDiagram)
+      .finally(() => {
+        this.diagramLoad = undefined
+      })
+    return this.diagramLoad
   }
 
   // basename нормализованного configured-пути: symlink-цель и absolute path хоста не раскрываются.

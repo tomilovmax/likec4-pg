@@ -61,7 +61,12 @@ export async function buildApp(
     reply.header('cache-control', 'no-store')
     return await workspace.getProject()
   })
-  app.get('/api/diagram', () => workspace.getDiagram())
+  // REQ-15: layouted-модель для Diagram panel; no-store — модель меняется с
+  // каждым сохранением (reparse — REQ-17).
+  app.get('/api/diagram', async (_request, reply) => {
+    reply.header('cache-control', 'no-store')
+    return await workspace.getDiagram()
+  })
 
   if (options.staticRoot !== undefined) {
     await app.register(fastifyStatic, {

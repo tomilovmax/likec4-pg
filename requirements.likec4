@@ -312,7 +312,7 @@ model {
     -> req_language_features 'Даёт parser и diagnostics context'
   }
 
-  req_diagram_preview = requirement_open {
+  req_diagram_preview = requirement_met {
     title 'REQ-15 · Интерактивный preview существующей LikeC4 view'
     summary 'Diagram panel отображает реальную интерактивную диаграмму из полной LikeC4 model.'
     description '''
@@ -321,11 +321,11 @@ model {
       renderer не допускается.
 
       Критерии приёмки:
-      - [ ] существующая валидная view отображается интерактивной LikeC4 diagram
-      - [ ] diagram строится из multi-file model, а не только из editor buffer
-      - [ ] при отсутствии view и при renderer error показано отдельное понятное состояние
-      - [ ] preview error не ломает файловое дерево и редактор
-      - [ ] docs/architecture.md фиксирует package, версию и upstream provenance адаптированного кода
+      - [x] существующая валидная view отображается интерактивной LikeC4 diagram
+      - [x] diagram строится из multi-file model, а не только из editor buffer
+      - [x] при отсутствии view и при renderer error показано отдельное понятное состояние
+      - [x] preview error не ломает файловое дерево и редактор
+      - [x] docs/architecture.md фиксирует package, версию и upstream provenance адаптированного кода
     '''
     -> req_invalid_dsl 'Preview сообщает о повреждённой модели'
   }
@@ -380,7 +380,7 @@ model {
     '''
   }
 
-  req_language_features = requirement_open {
+  req_language_features = requirement_met {
     title 'REQ-19 · LikeC4 syntax highlighting и diagnostics'
     summary 'Редактор подсвечивает LikeC4 и показывает diagnostics официальной language integration без локальной установки LikeC4 у пользователя.'
     description '''
@@ -389,12 +389,12 @@ model {
       не используется, если официальный интегрируемый вариант существует.
 
       Критерии приёмки:
-      - [ ] .c4/.likec4 имеет syntax highlighting
-      - [ ] invalid DSL показывает diagnostics в editor
-      - [ ] autocomplete работает, если выбранная официальная integration его предоставляет
-      - [ ] browser user не устанавливает локальный LikeC4 CLI или extension
-      - [ ] ошибка одного документа не делает editor неработоспособным
-      - [ ] README/architecture фиксирует выбранный пакет, версию и ограничения integration
+      - [x] .c4/.likec4 имеет syntax highlighting
+      - [x] invalid DSL показывает diagnostics в editor
+      - [x] autocomplete работает, если выбранная официальная integration его предоставляет
+      - [x] browser user не устанавливает локальный LikeC4 CLI или extension
+      - [x] ошибка одного документа не делает editor неработоспособным
+      - [x] README/architecture фиксирует выбранный пакет, версию и ограничения integration
     '''
   }
 

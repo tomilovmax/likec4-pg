@@ -1,58 +1,65 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
+import { MonacoEditorReactComp } from '@typefox/monaco-editor-react'
 import type { FileContentResponse } from '@likec4-web-ide/contracts'
 
-import {
-  createCodeEditor,
-  getOrCreateModel,
-  type CodeEditorHandle,
-} from './monaco-instance'
-
-interface MonacoEditorProps {
-  ariaLabel: string
-  /** Сохранённый текст файла: база buffer’а и значение только что созданной модели. */
-  initialValue: string
-  language: FileContentResponse['language']
-  /** Вызывается и при переключении модели, чтобы восстановить dirty state её buffer’а. */
-  onChange: (value: string) => void
-  path: string
-}
+import { createLikeC4WrapperConfig } from './likec4-language-config'
+import { likeC4LanguageRuntime } from './likec4-language-runtime'
 
 /**
- * REQ-06: один экземпляр редактора на панель, файлы переключаются сменой
- * модели. Содержимое задаётся буквально, без format-on-load; изменения текста
- * уходят наверх через onChange.
+ * REQ-19: editor на официальном Monaco/VS Code runtime (monaco-editor-wrapper
+ * + LikeC4 language server в Web Worker). Компонент тонкий: модели, language
+ * client и диагностика живут в likec4-language-runtime.
  */
-export function MonacoEditor({ ariaLabel, initialValue, language, onChange, path }: MonacoEditorProps) {
-  const containerRef = useRef<HTMLDivElement>(null)
-  const editorRef = useRef<CodeEditorHandle | null>(null)
+export function MonacoEditor({
+  ariaLabel,
+  initialValue,
+  language,
+  onChange,
+  path,
+}: {
+  ariaLabel: string
+  initialValue: string
+  language: FileContentResponse['language']
+  onChange: (value: string) => void
+  path: string
+}) {
+  // Смена identity wrapperConfig полностью переинициализирует editor, поэтому
+  // конфиг создаётся один раз на монтирование компонента.
+  const [wrapperConfig] = useState(() => createLikeC4WrapperConfig())
   const onChangeRef = useRef(onChange)
   onChangeRef.current = onChange
 
   useEffect(() => {
-    const container = containerRef.current
-    if (container === null) {
-      return
-    }
-    const editor = createCodeEditor(container, { ariaLabel })
-    editorRef.current = editor
+    let disposed = false
+    let subscription: { dispose(): void } | null = null
+    void likeC4LanguageRuntime.openModel(path, language, initialValue).then((model) => {
+      if (disposed) {
+        return
+      }
+      onChangeRef.current(model.getValue())
+      subscription = model.onDidChangeContent(() => onChangeRef.current(model.getValue()))
+    })
     return () => {
-      editor.dispose()
-      editorRef.current = null
+      disposed = true
+      subscription?.dispose()
     }
-  }, [ariaLabel])
-
-  useEffect(() => {
-    const editor = editorRef.current
-    if (editor === null) {
-      return
-    }
-    const model = getOrCreateModel(path, language, initialValue)
-    editor.setModel(model)
-    // Возврат к ранее изменённому buffer обязан вернуть и dirty state.
-    onChangeRef.current(model.getValue())
-    return model.onDidChangeContent(() => onChangeRef.current(model.getValue()))
   }, [initialValue, language, path])
 
-  return <div className="code-editor-host" ref={containerRef} />
+  useEffect(() => {
+    likeC4LanguageRuntime.setAriaLabel(ariaLabel)
+  }, [ariaLabel])
+
+  return (
+    <MonacoEditorReactComp
+      className="code-editor-host"
+      wrapperConfig={wrapperConfig}
+      onLoad={(wrapper) => {
+        likeC4LanguageRuntime.attachWrapper(wrapper, wrapperConfig.fsProvider)
+      }}
+      onError={(error) => {
+        likeC4LanguageRuntime.reportError(error)
+      }}
+    />
+  )
 }

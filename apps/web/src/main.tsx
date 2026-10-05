@@ -1,4 +1,3 @@
-import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 
 import { App } from './app'
@@ -10,8 +9,6 @@ if (container === null) {
   throw new Error('Root container is missing')
 }
 
-createRoot(container).render(
-  <StrictMode>
-    <App />
-  </StrictMode>,
-)
+// Без StrictMode: его двойное монтирование в dev переинициализирует VS Code
+// services Monaco, которые инициализируются строго один раз (REQ-19).
+createRoot(container).render(<App />)

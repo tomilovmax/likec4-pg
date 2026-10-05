@@ -10,7 +10,6 @@ import {
   type WorkspaceResponse,
   workspaceResponseSchema,
 } from '@likec4-web-ide/contracts'
-import type { ZodType } from 'zod'
 
 export class ApiClientError extends Error {
   constructor(readonly details: ApiError) {
@@ -18,7 +17,11 @@ export class ApiClientError extends Error {
   }
 }
 
-async function request<T>(path: string, schema: ZodType<T>): Promise<T> {
+interface ResponseSchema<T> {
+  parse(value: unknown): T
+}
+
+async function request<T>(path: string, schema: ResponseSchema<T>): Promise<T> {
   const response = await fetch(path, {
     headers: { accept: 'application/json' },
   })
