@@ -905,6 +905,232 @@ describe('REQ-07 save buffer', () => {
   })
 })
 
+describe('REQ-08 create file', () => {
+  const emptyContentVersion =
+    'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'
+
+  interface CreateCall {
+    body: { parent: string; name: string }
+  }
+
+  const createdFileEntry = {
+    path: 'model/new-notes.c4',
+    name: 'new-notes.c4',
+    kind: 'file',
+    language: 'likec4',
+  }
+
+  /** POST /api/files управляется хендлером; успех автоматически расширяет дерево. */
+  function stubApiWithCreate(createHandler: (call: CreateCall) => Promise<Response>) {
+    const createCalls: CreateCall[] = []
+    let fileCreated = false
+    const fetchMock = vi.fn((path: string, init?: RequestInit): Promise<Response> => {
+      if (path === '/api/files' && init?.method === 'POST') {
+        const call: CreateCall = {
+          body: JSON.parse(String(init.body)) as { parent: string; name: string },
+        }
+        createCalls.push(call)
+        return createHandler(call).then((response) => {
+          if (response.ok) {
+            fileCreated = true
+          }
+          return response
+        })
+      }
+      if (path === '/api/files') {
+        return Promise.resolve(
+          jsonResponse({
+            items: fileCreated
+              ? [...nestedFilesResponse.items, createdFileEntry]
+              : nestedFilesResponse.items,
+          }),
+        )
+      }
+      if (path === '/api/workspace') {
+        return Promise.resolve(
+          jsonResponse({ status: 'ready', displayName: 'architecture' }),
+        )
+      }
+      if (path === '/api/diagram') {
+        return Promise.resolve(jsonResponse({ status: 'empty', reason: 'NO_VIEWS' }))
+      }
+      if (path === '/api/files/model/new-notes.c4') {
+        return Promise.resolve(
+          jsonResponse({
+            path: 'model/new-notes.c4',
+            name: 'new-notes.c4',
+            language: 'likec4',
+            content: '',
+            version: emptyContentVersion,
+          }),
+        )
+      }
+      return Promise.reject(new Error(`unexpected fetch: ${path}`))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    return { createCalls, fetchMock }
+  }
+
+  async function fillCreateForm(files: HTMLElement, options: { parent?: string; name: string }) {
+    // Каталоги формы строятся из дерева: ждём его загрузки до выбора parent.
+    await waitFor(() => {
+      expect(within(files).getByText('specification.c4')).toBeTruthy()
+    })
+    fireEvent.click(within(files).getByRole('button', { name: '+ Новый .c4 файл' }))
+    if (options.parent !== undefined) {
+      fireEvent.change(within(files).getByLabelText('Каталог'), {
+        target: { value: options.parent },
+      })
+    }
+    fireEvent.change(within(files).getByLabelText('Имя файла'), {
+      target: { value: options.name },
+    })
+  }
+
+  it('creates the file in the chosen directory, refreshes the tree and opens it', async () => {
+    const { createCalls, fetchMock } = stubApiWithCreate(() =>
+      Promise.resolve(
+        jsonResponse({
+          path: 'model/new-notes.c4',
+          name: 'new-notes.c4',
+          language: 'likec4',
+          content: '',
+          version: emptyContentVersion,
+        }),
+      ),
+    )
+
+    render(<App />)
+
+    const files = screen.getByRole('region', { name: 'Files' })
+    const editor = screen.getByRole('region', { name: 'Code Editor' })
+
+    await fillCreateForm(files, { parent: 'model', name: 'new-notes' })
+    // Подсказка до запроса: имя без расширения дополняется, путь — относительный.
+    expect(within(files).getByRole('status').textContent).toContain(
+      'Будет создан: model/new-notes.c4',
+    )
+
+    fireEvent.click(within(files).getByRole('button', { name: 'Создать' }))
+
+    // Файл открывается в редакторе как пустой buffer по относительному пути.
+    await waitFor(() => {
+      expect(readFakeModel('model/new-notes.c4')).toBe('')
+    })
+    expect(editor.querySelector('.opened-file__meta')?.textContent).toContain(
+      'model/new-notes.c4',
+    )
+
+    // Дерево перечитано из server state и содержит новый файл.
+    await waitFor(() => {
+      expect(within(files).getByRole('button', { name: /new-notes\.c4/ })).toBeTruthy()
+    })
+    expect(within(files).queryByLabelText('Имя файла')).toBeNull()
+
+    expect(createCalls).toEqual([{ body: { parent: 'model', name: 'new-notes.c4' } }])
+    // Дерево перечитано после успеха (плюс фоновая загрузка LikeC4-источников
+    // для language service при открытии файла — REQ-19).
+    const listRequests = fetchMock.mock.calls.filter(
+      ([path, init]) => path === '/api/files' && init?.method !== 'POST',
+    )
+    expect(listRequests.length).toBeGreaterThanOrEqual(2)
+  })
+
+  it('shows the conflict and keeps the tree unchanged when the name is taken', async () => {
+    const { fetchMock } = stubApiWithCreate(() =>
+      Promise.resolve(
+        jsonResponse(
+          {
+            error: {
+              code: 'CONFLICT',
+              message: 'Entry "notes.c4" already exists in this directory.',
+            },
+          },
+          409,
+        ),
+      ),
+    )
+
+    render(<App />)
+
+    const files = screen.getByRole('region', { name: 'Files' })
+    await fillCreateForm(files, { name: 'notes.c4' })
+    fireEvent.click(within(files).getByRole('button', { name: 'Создать' }))
+
+    await waitFor(() => {
+      expect(within(files).getByRole('alert').textContent).toContain('уже существует')
+    })
+    // Ложного entry нет: дерево не перечитано, файла в нём не появилось.
+    expect(within(files).queryByRole('button', { name: /notes\.c4/ })).toBeNull()
+    expect(
+      fetchMock.mock.calls.filter(([path, init]) => path === '/api/files' && init?.method !== 'POST'),
+    ).toHaveLength(1)
+    // Форма остаётся доступной для исправления имени.
+    expect(within(files).getByLabelText('Имя файла')).toBeTruthy()
+  })
+
+  it('validates the name before any request', async () => {
+    const { createCalls } = stubApiWithCreate(() =>
+      Promise.resolve(jsonResponse({})),
+    )
+
+    render(<App />)
+
+    const files = screen.getByRole('region', { name: 'Files' })
+    fireEvent.click(within(files).getByRole('button', { name: '+ Новый .c4 файл' }))
+
+    // Пустое имя: submit недоступен.
+    expect(within(files).getByRole('button', { name: 'Создать' })).toHaveProperty('disabled', true)
+
+    // Недопустимое расширение отклоняется инлайн без API-запроса.
+    fireEvent.change(within(files).getByLabelText('Имя файла'), {
+      target: { value: 'readme.md' },
+    })
+    await waitFor(() => {
+      expect(within(files).getByRole('alert').textContent).toContain('.c4')
+    })
+    expect(within(files).getByRole('button', { name: 'Создать' })).toHaveProperty('disabled', true)
+
+    // Path-подобное имя отклоняется тем же инлайн-правилом.
+    fireEvent.change(within(files).getByLabelText('Имя файла'), {
+      target: { value: 'nested/notes' },
+    })
+    await waitFor(() => {
+      expect(within(files).getByRole('alert').textContent).toContain('Имя не может содержать')
+    })
+
+    expect(createCalls).toEqual([])
+  })
+
+  it('keeps the form error visible when the API rejects the parent', async () => {
+    stubApiWithCreate(() =>
+      Promise.resolve(
+        jsonResponse(
+          { error: { code: 'NOT_FOUND', message: 'Entry not found in the workspace.' } },
+          404,
+        ),
+      ),
+    )
+
+    render(<App />)
+
+    const files = screen.getByRole('region', { name: 'Files' })
+    await fillCreateForm(files, { parent: 'model', name: 'new-notes' })
+    fireEvent.click(within(files).getByRole('button', { name: 'Создать' }))
+
+    await waitFor(() => {
+      expect(within(files).getByRole('alert').textContent).toContain(
+        'Entry not found in the workspace.',
+      )
+    })
+    // Дерево не тронуто, редактор остался без открытого файла.
+    expect(within(files).queryByRole('button', { name: /new-notes\.c4/ })).toBeNull()
+    expect(
+      screen.getByRole('region', { name: 'Code Editor' }).querySelector('.opened-file'),
+    ).toBeNull()
+  })
+})
+
 describe('REQ-16 view selector', () => {
   const modelViews = { index: {}, overview: {}, 'dev-extra': {} }
 

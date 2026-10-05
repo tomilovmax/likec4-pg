@@ -94,6 +94,108 @@ export interface SaveWorkspaceFileInput {
   version: string
 }
 
+export interface CreateWorkspaceFileInput {
+  /** Workspace-относительный путь существующего каталога; '' — корень workspace. */
+  parent: string
+  /** Базовое имя создаваемого файла. */
+  name: string
+}
+
+/**
+ * Создание нового .c4 файла (REQ-08). Имя — строго базовое имя с расширением
+ * `.c4`: это подмножество классификатора REQ-04, поэтому созданный файл
+ * гарантированно попадает в дерево и открывается как редактируемый LikeC4
+ * исходник. Каталог назначения резолвится как существующая запись, цель —
+ * через `resolveChild` guard’а REQ-03 (realpath parent, а для уже занятого
+ * имени — и realpath цели), поэтому traversal, symlink наружу и отсутствующий
+ * parent отклоняются до записи.
+ *
+ * Файл не перезаписывает существующие записи: `writeFile` с флагом `wx` —
+ * атомарный create-if-not-exists, занятое имя (файл или каталог) даёт
+ * `409 CONFLICT` без единого байта записи; гонка двух одинаковых запросов
+ * завершается ровно одним успехом. Создаётся пустой literal-файл — version
+ * token ответа это sha256 пустого содержимого, той же схемой, что у чтения.
+ */
+export async function createWorkspaceFile(
+  resolver: WorkspacePathResolver,
+  input: CreateWorkspaceFileInput,
+): Promise<FileContentResponse> {
+  const name = validateNewFileName(input.name)
+
+  let parentPath = ''
+  if (input.parent !== '') {
+    const parent = await resolver.resolveExisting(input.parent)
+    const stats = await stat(parent.absolutePath)
+    if (!stats.isDirectory()) {
+      throw new ApiError(
+        400,
+        'INVALID_PATH',
+        'Parent must be a directory inside the workspace.',
+      )
+    }
+    parentPath = parent.relativePath
+  }
+
+  const resolved = await resolver.resolveChild(
+    parentPath === '' ? name : `${parentPath}/${name}`,
+  )
+
+  const bytes = Buffer.alloc(0)
+  try {
+    await writeFile(resolved.absolutePath, bytes, { flag: 'wx', mode: 0o644 })
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code
+    if (code === 'EEXIST') {
+      throw new ApiError(
+        409,
+        'CONFLICT',
+        `Entry "${name}" already exists in this directory.`,
+      )
+    }
+    if (code === 'ENOENT') {
+      // Parent исчез между resolve и записью — это не 500 и не перезапись.
+      throw new ApiError(404, 'NOT_FOUND', 'Parent directory not found in the workspace.')
+    }
+    throw error
+  }
+
+  return {
+    path: resolved.relativePath,
+    name: path.basename(resolved.relativePath),
+    language: 'likec4',
+    content: '',
+    version: contentVersion(bytes),
+  }
+}
+
+/** Имя нового файла: одиночная запись с расширением .c4, без path-семантики. */
+function validateNewFileName(rawName: string): string {
+  const name = rawName.trim()
+  if (name === '') {
+    throw new ApiError(400, 'VALIDATION_ERROR', 'File name is required.')
+  }
+  if (
+    name.includes('/') ||
+    name.includes('\\') ||
+    name.includes('\0') ||
+    name === '.' ||
+    name === '..'
+  ) {
+    throw new ApiError(
+      400,
+      'INVALID_PATH',
+      'File name must be a single entry name, not a path.',
+    )
+  }
+  if (Buffer.byteLength(name, 'utf8') > 255) {
+    throw new ApiError(400, 'INVALID_PATH', 'File name is too long.')
+  }
+  if (!name.endsWith('.c4')) {
+    throw new ApiError(400, 'VALIDATION_ERROR', 'Only new .c4 files can be created.')
+  }
+  return name
+}
+
 /**
  * Атомарное сохранение literal text buffer (REQ-07). Путь и тип проходят тот же
  * guard REQ-03 и тот же классификатор REQ-04, что и чтение, поэтому записать

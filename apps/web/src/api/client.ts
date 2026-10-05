@@ -1,5 +1,8 @@
 import {
   apiErrorSchema,
+  createFileResponseSchema,
+  type CreateFileRequest,
+  type CreateFileResponse,
   diagramResponseSchema,
   fileContentResponseSchema,
   filesResponseSchema,
@@ -57,14 +60,15 @@ function fileUrl(relativePath: string): string {
   return `/api/files/${relativePath.split('/').map(encodeURIComponent).join('/')}`
 }
 
-/** REQ-07: атомарное сохранение literal buffer с проверкой version token. */
-async function putJson<T>(
+/** Отправка JSON-тела методами с полезной нагрузкой (PUT/POST). */
+async function sendJson<T>(
+  method: 'PUT' | 'POST',
   path: string,
   body: unknown,
   schema: ResponseSchema<T>,
 ): Promise<T> {
   return request(path, schema, {
-    method: 'PUT',
+    method,
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body),
   })
@@ -77,7 +81,10 @@ export const api = {
   readFile: (relativePath: string): Promise<FileContentResponse> =>
     request(fileUrl(relativePath), fileContentResponseSchema),
   saveFile: (relativePath: string, payload: SaveFileRequest): Promise<SaveFileResponse> =>
-    putJson(fileUrl(relativePath), payload, saveFileResponseSchema),
+    sendJson('PUT', fileUrl(relativePath), payload, saveFileResponseSchema),
+  // REQ-08: неперезаписывающее создание нового .c4 файла в существующем каталоге.
+  createFile: (payload: CreateFileRequest): Promise<CreateFileResponse> =>
+    sendJson('POST', '/api/files', payload, createFileResponseSchema),
   getDiagram: (): Promise<DiagramResponse> =>
     request('/api/diagram', diagramResponseSchema),
 }

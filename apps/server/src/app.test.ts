@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { access, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -538,6 +538,231 @@ describe('REQ-07 API', () => {
       await expect(readFile(path.join(workspaceRoot, 'model/spec.c4'), 'utf8')).resolves.toBe(
         'model {}\n',
       )
+    } finally {
+      await app.close()
+    }
+  })
+})
+
+describe('REQ-08 API', () => {
+  const emptyContentVersion =
+    'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'
+
+  async function buildAppWithDirectories() {
+    const { app, workspaceRoot } = await buildConfiguredApp()
+    await mkdir(path.join(workspaceRoot, 'model'))
+    return { app, workspaceRoot }
+  }
+
+  it('creates an empty .c4 file in the root and in a nested directory', async () => {
+    const { app, workspaceRoot } = await buildAppWithDirectories()
+
+    try {
+      const [rootCreate, nestedCreate] = await Promise.all([
+        app.inject({
+          method: 'POST',
+          url: '/api/files',
+          payload: { parent: '', name: 'notes.c4' },
+        }),
+        app.inject({
+          method: 'POST',
+          url: '/api/files',
+          payload: { parent: 'model', name: 'diagram.c4' },
+        }),
+      ])
+
+      for (const response of [rootCreate, nestedCreate]) {
+        expect(response.statusCode).toBe(201)
+        expect(response.headers['cache-control']).toBe('no-store')
+        expect(response.headers.etag).toBe(`"${emptyContentVersion}"`)
+      }
+      expect(rootCreate.json()).toEqual({
+        path: 'notes.c4',
+        name: 'notes.c4',
+        language: 'likec4',
+        content: '',
+        version: emptyContentVersion,
+      })
+      expect(nestedCreate.json()).toEqual({
+        path: 'model/diagram.c4',
+        name: 'diagram.c4',
+        language: 'likec4',
+        content: '',
+        version: emptyContentVersion,
+      })
+      // Файлы на диске пустые и не содержат ничего лишнего.
+      await expect(readFile(path.join(workspaceRoot, 'notes.c4'), 'utf8')).resolves.toBe('')
+      await expect(readFile(path.join(workspaceRoot, 'model/diagram.c4'), 'utf8')).resolves.toBe('')
+      expect(JSON.stringify(rootCreate.json())).not.toContain(workspaceRoot)
+      expect(JSON.stringify(rootCreate.json())).not.toContain(tmpdir())
+
+      // Новый файл попадает в дерево разрешённых файлов.
+      const tree = await app.inject({ method: 'GET', url: '/api/files' })
+      expect(tree.json().items.map((item: { path: string }) => item.path)).toEqual(
+        expect.arrayContaining(['notes.c4', 'model/diagram.c4']),
+      )
+    } finally {
+      await app.close()
+    }
+  })
+
+  it('gives 409 CONFLICT for an existing file or directory without overwriting', async () => {
+    const { app, workspaceRoot } = await buildAppWithDirectories()
+    await writeFile(path.join(workspaceRoot, 'existing.c4'), 'root\n', 'utf8')
+    await writeFile(path.join(workspaceRoot, 'model/existing.c4'), 'model {}\n', 'utf8')
+    await mkdir(path.join(workspaceRoot, 'occupied.c4'))
+
+    try {
+      const [existingRootFile, existingDirectory, sameNameInDirectory] = await Promise.all([
+        app.inject({
+          method: 'POST',
+          url: '/api/files',
+          payload: { parent: '', name: 'existing.c4' },
+        }),
+        app.inject({
+          method: 'POST',
+          url: '/api/files',
+          payload: { parent: '', name: 'occupied.c4' },
+        }),
+        app.inject({
+          method: 'POST',
+          url: '/api/files',
+          payload: { parent: 'model', name: 'existing.c4' },
+        }),
+      ])
+
+      for (const response of [existingRootFile, existingDirectory, sameNameInDirectory]) {
+        expect(response.statusCode).toBe(409)
+        expect(response.json().error.code).toBe('CONFLICT')
+      }
+      // Существующее содержимое не перезаписано, файлы остались на месте.
+      await expect(readFile(path.join(workspaceRoot, 'existing.c4'), 'utf8')).resolves.toBe(
+        'root\n',
+      )
+      await expect(
+        readFile(path.join(workspaceRoot, 'model/existing.c4'), 'utf8'),
+      ).resolves.toBe('model {}\n')
+      expect((await stat(path.join(workspaceRoot, 'occupied.c4'))).isDirectory()).toBe(true)
+    } finally {
+      await app.close()
+    }
+  })
+
+  it('rejects missing parents, file parents and traversal parents', async () => {
+    const { app, workspaceRoot } = await buildAppWithDirectories()
+    await writeFile(path.join(workspaceRoot, 'model/spec.c4'), '', 'utf8')
+    const outsideDirectory = await mkdtemp(path.join(tmpdir(), 'outside-'))
+    createdDirectories.push(outsideDirectory)
+    await writeFile(path.join(outsideDirectory, 'secret.c4'), 'outside\n', 'utf8')
+    await symlink(outsideDirectory, path.join(workspaceRoot, 'linked'))
+    // Существующий symlink с именем создаваемого файла, ведущий наружу.
+    await symlink(path.join(outsideDirectory, 'secret.c4'), path.join(workspaceRoot, 'trap.c4'))
+
+    try {
+      const [missing, fileParent, traversal, absolute, symlinkParent, symlinkTarget] =
+        await Promise.all([
+          app.inject({
+            method: 'POST',
+            url: '/api/files',
+            payload: { parent: 'missing', name: 'notes.c4' },
+          }),
+          app.inject({
+            method: 'POST',
+            url: '/api/files',
+            payload: { parent: 'model/spec.c4', name: 'notes.c4' },
+          }),
+          app.inject({
+            method: 'POST',
+            url: '/api/files',
+            payload: { parent: '../outside', name: 'notes.c4' },
+          }),
+          app.inject({
+            method: 'POST',
+            url: '/api/files',
+            payload: { parent: '/etc', name: 'notes.c4' },
+          }),
+          app.inject({
+            method: 'POST',
+            url: '/api/files',
+            payload: { parent: 'linked', name: 'notes.c4' },
+          }),
+          app.inject({
+            method: 'POST',
+            url: '/api/files',
+            payload: { parent: '', name: 'trap.c4' },
+          }),
+        ])
+
+      expect(missing.statusCode).toBe(404)
+      expect(missing.json().error.code).toBe('NOT_FOUND')
+      expect(fileParent.statusCode).toBe(400)
+      expect(fileParent.json().error.code).toBe('INVALID_PATH')
+      for (const response of [traversal, absolute, symlinkParent, symlinkTarget]) {
+        expect(response.statusCode).toBe(403)
+        expect(response.json().error.code).toBe('PATH_OUTSIDE_WORKSPACE')
+      }
+      // Ничего не создано ни внутри workspace, ни снаружи.
+      const tree = await app.inject({ method: 'GET', url: '/api/files' })
+      expect(tree.json().items.map((item: { path: string }) => item.path)).not.toContain(
+        'notes.c4',
+      )
+      await expect(access(path.join(outsideDirectory, 'notes.c4'))).rejects.toThrow()
+    } finally {
+      await app.close()
+    }
+  })
+
+  it('rejects disallowed extensions and path-like names before any write', async () => {
+    const { app } = await buildAppWithDirectories()
+
+    try {
+      const [markdown, likec4Extension, uppercase, pathName, backslashName, empty, noBody] =
+        await Promise.all([
+          app.inject({
+            method: 'POST',
+            url: '/api/files',
+            payload: { parent: '', name: 'notes.md' },
+          }),
+          app.inject({
+            method: 'POST',
+            url: '/api/files',
+            payload: { parent: '', name: 'notes.likec4' },
+          }),
+          app.inject({
+            method: 'POST',
+            url: '/api/files',
+            payload: { parent: '', name: 'NOTES.C4' },
+          }),
+          app.inject({
+            method: 'POST',
+            url: '/api/files',
+            payload: { parent: '', name: 'nested/notes.c4' },
+          }),
+          app.inject({
+            method: 'POST',
+            url: '/api/files',
+            payload: { parent: '', name: 'nested\\notes.c4' },
+          }),
+          app.inject({
+            method: 'POST',
+            url: '/api/files',
+            payload: { parent: '', name: '   ' },
+          }),
+          app.inject({ method: 'POST', url: '/api/files' }),
+        ])
+
+      for (const response of [markdown, likec4Extension, uppercase, empty, noBody]) {
+        expect(response.statusCode).toBe(400)
+        expect(response.json().error.code).toBe('VALIDATION_ERROR')
+      }
+      for (const response of [pathName, backslashName]) {
+        expect(response.statusCode).toBe(400)
+        expect(response.json().error.code).toBe('INVALID_PATH')
+      }
+      // Ни один отклонённый файл не появился на диске: дерево пустое (пустой
+      // каталог model вырезается правилом REQ-04, новых файлов нет).
+      const tree = await app.inject({ method: 'GET', url: '/api/files' })
+      expect(tree.json().items).toEqual([])
     } finally {
       await app.close()
     }

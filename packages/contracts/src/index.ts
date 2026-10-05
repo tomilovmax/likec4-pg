@@ -73,6 +73,21 @@ export type SaveFileRequest = z.infer<typeof saveFileRequestSchema>
 export const saveFileResponseSchema = fileContentResponseSchema
 export type SaveFileResponse = FileContentResponse
 
+// REQ-08: создание нового .c4 файла. client → POST /api/files { parent, name };
+// `parent` — workspace-относительный путь существующего каталога ('' — корень
+// workspace), `name` — базовое имя создаваемого файла. Backend создаёт только
+// .c4 и никогда не перезаписывает существующую запись.
+export const createFileRequestSchema = z.object({
+  parent: z.string(),
+  name: z.string(),
+})
+export type CreateFileRequest = z.infer<typeof createFileRequestSchema>
+
+// Успешный ответ — то же представление, что у чтения: новый пустой файл уже
+// можно открыть в редакторе без дополнительного запроса.
+export const createFileResponseSchema = fileContentResponseSchema
+export type CreateFileResponse = FileContentResponse
+
 export type FileContentResponse = z.infer<typeof fileContentResponseSchema>
 
 // REQ-14: полная multi-file модель проекта, загруженная официальным API LikeC4.

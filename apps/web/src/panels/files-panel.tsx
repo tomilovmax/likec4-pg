@@ -1,8 +1,8 @@
-import { useCallback } from 'react'
+import { useCallback, useState, type FormEvent } from 'react'
 
-import type { FileEntry } from '@likec4-web-ide/contracts'
+import type { CreateFileResponse, FileEntry } from '@likec4-web-ide/contracts'
 
-import { api } from '../api/client'
+import { api, ApiClientError } from '../api/client'
 import { Panel } from '../components/panel'
 import { ResourceError } from '../components/resource-error'
 import { buildFileTree, type FileTreeNode } from '../file-tree'
@@ -21,6 +21,28 @@ export function FilesPanel({ dirtyPaths, selectedPath, onOpenFile }: FilesPanelP
 
   return (
     <Panel title="Files">
+      {/* REQ-08: создание доступно и для пустого workspace — это единственный
+          способ появления первого .c4 файла без доступа к файловой системе. */}
+      <CreateFileControl
+        directories={
+          state.status === 'ready'
+            ? state.data.items
+                .filter((item) => item.kind === 'directory')
+                .map((item) => item.path)
+            : []
+        }
+        onCreated={(created) => {
+          // Дерево обновляется перечитыванием server state, а не локальной
+          // вставкой: UI не строит записи сам и не расходится с сервером.
+          reload()
+          onOpenFile({
+            path: created.path,
+            name: created.name,
+            kind: 'file',
+            language: 'likec4',
+          })
+        }}
+      />
       {state.status === 'loading' && <p className="resource-state">Загружаем файлы…</p>}
       {state.status === 'error' && (
         <ResourceError message={state.message} onRetry={reload} />
@@ -42,6 +64,157 @@ export function FilesPanel({ dirtyPaths, selectedPath, onOpenFile }: FilesPanelP
         />
       )}
     </Panel>
+  )
+}
+
+/**
+ * Валидация имени до запроса (REQ-08): создаётся только .c4. Имя без
+ * расширения дополняется — ввод «notes» создаёт notes.c4; расширение,
+ * отличное от .c4, и path-подобные имена отклоняются инлайн без API-запроса.
+ */
+function resolveNewFileName(
+  rawName: string,
+): { name: string | null; error: string | null } {
+  const trimmed = rawName.trim()
+  if (trimmed === '') {
+    return { name: null, error: null }
+  }
+  if (trimmed.includes('/') || trimmed.includes('\\')) {
+    return { name: null, error: 'Имя не может содержать «/» или «\\».' }
+  }
+  if (trimmed.endsWith('.c4')) {
+    return { name: trimmed, error: null }
+  }
+  if (trimmed.includes('.')) {
+    return { name: null, error: 'Создать можно только файл с расширением .c4.' }
+  }
+  return { name: `${trimmed}.c4`, error: null }
+}
+
+function CreateFileControl({
+  directories,
+  onCreated,
+}: {
+  directories: string[]
+  onCreated: (created: CreateFileResponse) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const [parent, setParent] = useState('')
+  const [name, setName] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const [creating, setCreating] = useState(false)
+
+  const resolved = resolveNewFileName(name)
+  const canSubmit = resolved.name !== null && !creating
+  // Ошибка запроса приоритетнее инлайн-валидации: она появляется после submit.
+  const shownError = error ?? resolved.error
+
+  if (!open) {
+    return (
+      <button
+        className="create-file__toggle"
+        onClick={() => {
+          setOpen(true)
+        }}
+        type="button"
+      >
+        + Новый .c4 файл
+      </button>
+    )
+  }
+
+  const handleSubmit = (event: FormEvent) => {
+    event.preventDefault()
+    const newName = resolved.name
+    if (newName === null || creating) {
+      return
+    }
+    setCreating(true)
+    setError(null)
+    void api.createFile({ parent, name: newName }).then(
+      (created) => {
+        setOpen(false)
+        setName('')
+        setParent('')
+        setCreating(false)
+        onCreated(created)
+      },
+      (submitError: unknown) => {
+        setCreating(false)
+        const isConflict =
+          submitError instanceof ApiClientError &&
+          submitError.details.error.code === 'CONFLICT'
+        setError(
+          isConflict
+            ? `Файл «${newName}» уже существует в выбранном каталоге.`
+            : submitError instanceof Error
+              ? submitError.message
+              : 'Не удалось создать файл',
+        )
+      },
+    )
+  }
+
+  const cancel = () => {
+    setOpen(false)
+    setName('')
+    setParent('')
+    setError(null)
+  }
+
+  return (
+    <form className="create-file" onSubmit={handleSubmit}>
+      <label className="create-file__field">
+        Каталог
+        <select
+          className="create-file__select"
+          onChange={(event) => {
+            setParent(event.target.value)
+            setError(null)
+          }}
+          value={parent}
+        >
+          <option value="">(корень workspace)</option>
+          {directories.map((directory) => (
+            <option key={directory} value={directory}>
+              {directory}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label className="create-file__field">
+        Имя файла
+        <input
+          className="create-file__input"
+          onChange={(event) => {
+            setName(event.target.value)
+            setError(null)
+          }}
+          placeholder="model-notes"
+          type="text"
+          value={name}
+        />
+      </label>
+      {resolved.name !== null && (
+        <p className="create-file__hint" role="status">
+          Будет создан: {parent === '' ? '' : `${parent}/`}
+          {resolved.name}
+        </p>
+      )}
+      {shownError !== null && (
+        <p className="create-file__error" role="alert">
+          {shownError}
+        </p>
+      )}
+      <div className="create-file__actions">
+        <button disabled={!canSubmit} type="submit">
+          {creating ? 'Создаём…' : 'Создать'}
+        </button>
+        <button onClick={cancel} type="button">
+          Отмена
+        </button>
+      </div>
+    </form>
   )
 }
 

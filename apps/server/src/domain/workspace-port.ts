@@ -15,6 +15,8 @@ export interface WorkspacePort {
     content: string,
     version: string,
   ): Promise<FileContentResponse>
+  // REQ-08: неперезаписывающее создание нового .c4 файла в существующем каталоге.
+  createFile(parent: string, name: string): Promise<FileContentResponse>
   getProject(): Promise<ProjectResponse>
   getDiagram(): Promise<DiagramResponse>
 }
